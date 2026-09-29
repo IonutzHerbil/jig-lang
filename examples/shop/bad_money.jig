@@ -1,0 +1,11 @@
+module shop.bad_money
+
+type Money = Money(float)
+
+
+def add_money(a: Money, b: Money) -> Money:
+    """Add two amounts."""
+    effects: none
+    examples:
+        add_money(Money(10.0), Money(20.0)) -> Money(30.0)
+    return a + b

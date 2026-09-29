@@ -1,0 +1,33 @@
+lib stripe
+
+type ChargeId = ChargeId(str)
+type CustomerId = CustomerId(str)
+type Amount = Amount(int)
+
+enum StripeError:
+    CARD_DECLINED
+    INSUFFICIENT_FUNDS
+    INVALID_CUSTOMER
+    NETWORK_ERROR
+    RATE_LIMIT
+
+declare charge(amount: Amount, customer: CustomerId, currency: str) -> Result[ChargeId, StripeError]
+    effects: net
+    doc: "Charge a customer's default payment method"
+
+declare refund(charge: ChargeId, amount: Amount) -> Result[ChargeId, StripeError]
+    effects: net
+    doc: "Refund a charge (full or partial)"
+
+declare get_customer(customer: CustomerId) -> Result[Customer, StripeError]
+    effects: net
+    doc: "Retrieve customer details"
+
+record Customer:
+    id: CustomerId
+    email: str
+    balance: Amount
+
+declare create_customer(email: str) -> Result[CustomerId, StripeError]
+    effects: net
+    doc: "Create a new customer"

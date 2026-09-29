@@ -1,0 +1,72 @@
+module feature_showcase
+
+from std.ctx import Ctx, fixed_ctx
+from std.option import Nothing, Option, Some
+from std.record import replace
+from std.result import Err, Ok, Result
+
+type UserId = UserId(int)
+type Score = Score(int)
+
+record Player:
+    id: UserId
+    name: str
+    score: Score
+    active: bool
+
+enum GameError:
+    PLAYER_NOT_FOUND
+    INVALID_SCORE
+    GAME_OVER
+
+
+ALICE: Player = Player(id=UserId(1), name="Alice", score=Score(100), active=True)
+
+
+def add_score(player: Player, points: Score) -> Player:
+    """Add points to a player's score. Demonstrates newtypes, records."""
+    effects: none
+    requires: points >= Score(0)
+    examples:
+        add_score(ALICE, Score(50)) -> Player(id=UserId(1), name="Alice", score=Score(150), active=True)
+        add_score(ALICE, Score(-1)) -> rejected
+    new_score = player.score + points
+    return replace(player, score=new_score)
+
+
+def find_player(players: list[Player], id: UserId) -> Option[Player]:
+    """Find a player by ID. Demonstrates Option."""
+    effects: none
+    examples:
+        find_player([ALICE], UserId(1)) -> Some(ALICE)
+        find_player([ALICE], UserId(2)) -> Nothing
+    for p in players:
+        if p.id == id:
+            return Some(p)
+    return Nothing
+
+
+def log_score(ctx: Ctx, player: Player) -> str:
+    """Log a player's score. Demonstrates effects and Ctx."""
+    effects: log, time
+    examples:
+        log_score(fixed_ctx(t=1700000000), ALICE) -> "logged at 1700000000"
+    ctx.log.info(f"{player.name} has {player.score} points")
+    timestamp = ctx.clock.now()
+    return f"logged at {timestamp}"
+
+
+def describe_error(error: GameError) -> str:
+    """Convert error to message. Demonstrates exhaustive enum matching."""
+    effects: none
+    examples:
+        describe_error(GameError.PLAYER_NOT_FOUND) -> "Player not found"
+        describe_error(GameError.INVALID_SCORE) -> "Invalid score"
+        describe_error(GameError.GAME_OVER) -> "Game over"
+    match error:
+        case GameError.PLAYER_NOT_FOUND:
+            return "Player not found"
+        case GameError.INVALID_SCORE:
+            return "Invalid score"
+        case GameError.GAME_OVER:
+            return "Game over"

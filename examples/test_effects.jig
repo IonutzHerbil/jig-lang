@@ -1,0 +1,27 @@
+module test_effects
+
+from std.ctx import Ctx, fixed_ctx
+
+
+def pure_function(x: int) -> int:
+    """Claims to be pure but isn't."""
+    effects: none
+    examples:
+        pure_function(5) -> 5
+    return x
+
+
+def uses_time_without_declaring(ctx: Ctx) -> int:
+    """Forgot to declare the 'time' effect."""
+    effects: none
+    examples:
+        uses_time_without_declaring(fixed_ctx(t=1000)) -> 1000
+    return ctx.clock.now()
+
+
+def declares_but_doesnt_use() -> int:
+    """Declares 'time' but doesn't use it."""
+    effects: time
+    examples:
+        declares_but_doesnt_use() -> 42
+    return 42

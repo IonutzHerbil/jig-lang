@@ -1,0 +1,10 @@
+decision collections
+
+context: We need to work with collections of data throughout the application
+decision: Use built-in list/dict/set types. Custom collections are records wrapping these.
+rationale: Built-in types are well-optimized and familiar. Custom types wrap them for domain semantics.
+enforcement: No custom list/dict implementations. Use record Node: items: list[T]
+examples:
+    ✓ record Stack: items: list[int]
+    ✓ record Graph: nodes: list[Node], edges: dict[NodeId, list[NodeId]]
+    ✗ Implementing custom linked list class

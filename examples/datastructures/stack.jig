@@ -1,0 +1,74 @@
+module datastructures.stack
+
+from std.option import Nothing, Option, Some
+
+record Stack:
+    items: list[int]
+    capacity: int
+
+
+def empty_stack(capacity: int) -> Stack:
+    """Create an empty stack with given capacity."""
+    effects: none
+    requires: capacity > 0
+    requires: capacity <= 10000
+    examples:
+        empty_stack(100) -> Stack(items=[], capacity=100)
+        empty_stack(0) -> rejected
+    return Stack(items=[], capacity=capacity)
+
+
+def push(stack: Stack, value: int) -> Option[Stack]:
+    """Push value onto stack. Returns Nothing if full."""
+    effects: none
+    examples:
+        push(Stack(items=[], capacity=10), 5) -> Some(Stack(items=[5], capacity=10))
+        push(Stack(items=[1, 2, 3], capacity=3), 4) -> Nothing
+    if len(stack.items) >= stack.capacity:
+        return Nothing
+
+    new_items = stack.items + [value]
+    return Some(Stack(items=new_items, capacity=stack.capacity))
+
+
+def pop(stack: Stack) -> Option[tuple[int, Stack]]:
+    """Pop value from stack. Returns (value, new_stack) or Nothing if empty."""
+    effects: none
+    examples:
+        pop(Stack(items=[1, 2, 3], capacity=10)) -> Some((3, Stack(items=[1, 2], capacity=10)))
+        pop(Stack(items=[], capacity=10)) -> Nothing
+    if len(stack.items) == 0:
+        return Nothing
+
+    value = stack.items[-1]
+    new_items = stack.items[:-1]
+    return Some((value, Stack(items=new_items, capacity=stack.capacity)))
+
+
+def peek(stack: Stack) -> Option[int]:
+    """Get top value without removing it."""
+    effects: none
+    examples:
+        peek(Stack(items=[1, 2, 3], capacity=10)) -> Some(3)
+        peek(Stack(items=[], capacity=10)) -> Nothing
+    if len(stack.items) == 0:
+        return Nothing
+    return Some(stack.items[-1])
+
+
+def is_empty(stack: Stack) -> bool:
+    """Check if stack is empty."""
+    effects: none
+    examples:
+        is_empty(Stack(items=[], capacity=10)) -> True
+        is_empty(Stack(items=[1], capacity=10)) -> False
+    return len(stack.items) == 0
+
+
+def is_full(stack: Stack) -> bool:
+    """Check if stack is full."""
+    effects: none
+    examples:
+        is_full(Stack(items=[1, 2, 3], capacity=3)) -> True
+        is_full(Stack(items=[1, 2], capacity=3)) -> False
+    return len(stack.items) >= stack.capacity

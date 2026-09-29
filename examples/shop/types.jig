@@ -1,0 +1,13 @@
+module shop.types
+
+type Money = Money(int)
+type UserId = UserId(int)
+
+record Customer:
+    id: UserId
+    email: str
+    balance: Money
+
+enum PaymentError:
+    INSUFFICIENT_FUNDS
+    INVALID_AMOUNT

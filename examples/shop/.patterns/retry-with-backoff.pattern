@@ -1,0 +1,21 @@
+pattern retry-with-backoff
+
+problem: Retrying external API calls with exponential backoff
+solution:
+    def retry_with_backoff(ctx: Ctx, operation: str, max_attempts: int) -> Result[T, E]:
+        effects: time, net
+        for attempt in range(max_attempts):
+            result = try_operation(ctx, operation)
+            match result:
+                case Ok(value):
+                    return Ok(value)
+                case Err(error):
+                    if attempt < max_attempts - 1:
+                        backoff_seconds = 2 ** attempt
+                        # In real implementation, would sleep here
+                        ctx.log.warn(f"Retry {attempt + 1}/{max_attempts} after {backoff_seconds}s")
+                    else:
+                        return Err(error)
+anti-pattern: while True with break
+anti-pattern: unbounded loops
+anti-pattern: fixed sleep without exponential backoff

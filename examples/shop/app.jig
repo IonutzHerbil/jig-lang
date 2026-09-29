@@ -1,0 +1,32 @@
+module shop.app
+
+from shop.billing import charge, describe
+from shop.types import Customer, Money, UserId
+from std.ctx import Ctx, fixed_ctx
+from std.result import Err, Ok
+
+DEMO: Customer = Customer(id=UserId(7), email="demo@example.com", balance=Money(1000))
+
+
+def make_order_id(ctx: Ctx, customer: Customer) -> str:
+    """Build an order id from the customer, the clock, and a random suffix."""
+    effects: random, time
+    examples:
+        make_order_id(fixed_ctx(t=1700000000, seed=7), DEMO) -> "ord-7-1700000000-52e6"
+    now = ctx.clock.now()
+    suffix = ctx.random.hex(2)
+    return f"ord-{customer.id}-{now}-{suffix}"
+
+
+def main(ctx: Ctx) -> str:
+    """Charge the demo customer and log the outcome. Returns the order id."""
+    effects: log, random, time
+    examples:
+        main(fixed_ctx(t=1700000000, seed=7)) -> "ord-7-1700000000-52e6"
+    order_id = make_order_id(ctx, DEMO)
+    match charge(DEMO, Money(250)):
+        case Ok(updated):
+            ctx.log.info(f"{order_id}: charged, balance now {updated.balance}")
+        case Err(error):
+            ctx.log.info(f"{order_id}: {describe(error)}")
+    return order_id

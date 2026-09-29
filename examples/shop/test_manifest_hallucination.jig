@@ -1,0 +1,12 @@
+module test_manifest_hallucination
+
+from lib.stripe import Amount, charge, process_payment, refund_customer
+from std.result import Result
+
+
+def test() -> int:
+    """Test."""
+    effects: none
+    examples:
+        test() -> 5
+    return 5

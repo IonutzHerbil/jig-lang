@@ -1,0 +1,11 @@
+decision algorithms
+
+context: We implement various algorithms for data processing
+decision: All algorithms use iterative approaches with bounded loops, never unbounded recursion
+rationale: Recursion can cause stack overflow. Bounded loops are safer and more predictable.
+enforcement: Use for with range(), not while or recursion
+examples:
+    ✓ for i in range(len(items)):
+    ✓ for _ in range(MAX_ITERATIONS):
+    ✗ while condition:
+    ✗ def recursive_function(): return recursive_function()

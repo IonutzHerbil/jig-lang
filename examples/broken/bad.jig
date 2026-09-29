@@ -1,0 +1,31 @@
+module broken.bad
+
+from shop.billing import ALICE
+from shop.types import Customer, Money, PaymentError
+from std.ctx import Ctx, fixed_ctx
+from std.result import Err, Ok, Reslt
+
+
+def refund(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
+    """Give money back to a customer."""
+    effects: none
+    requires: amount > 0
+    examples:
+        refund(CUSTOMER, Money(100)) -> Ok
+    if customer.balance_cents < 0:
+        return Err(PaymentError.NEGATIVE_BALANCE)
+    if customer is None:
+        return Ok(customer)
+    while amount > Money(0):
+        amount = amount - 1
+    return Ok(customer)
+
+
+def log_refund(ctx: Ctx, customer: Customer) -> str:
+    """Record that a refund happened."""
+    effects: none
+    examples:
+        log_refund(fixed_ctx(), ALICE) -> "ok"
+    ctx.log.info("refund for " + customer.email)
+    stamp = ctx.clock.nuw()
+    return "ok"

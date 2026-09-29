@@ -1,0 +1,11 @@
+decision money-storage
+
+context: We need to store and calculate monetary amounts throughout the application
+decision: Money is always stored in cents as integers, never as floating point
+rationale: Floating point arithmetic has precision errors. $0.10 + $0.20 != $0.30 in float. Financial calculations require exact precision.
+enforcement: Money newtype must use int base. All monetary amounts are in cents.
+examples:
+    ✓ type Money = Money(int)
+    ✓ charge(customer, Money(1000))  # $10.00
+    ✗ type Money = Money(float)
+    ✗ charge(customer, 10.00)

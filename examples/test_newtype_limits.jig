@@ -1,0 +1,10 @@
+module test_newtype_limits
+
+type ValidInt = ValidInt(int)
+type ValidStr = ValidStr(str)
+type ValidFloat = ValidFloat(float)
+type ValidBool = ValidBool(bool)
+type ValidBytes = ValidBytes(bytes)
+
+type InvalidList = InvalidList(list)
+type InvalidDict = InvalidDict(dict)

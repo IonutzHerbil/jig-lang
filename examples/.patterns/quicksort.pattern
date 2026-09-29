@@ -1,0 +1,26 @@
+pattern quicksort
+
+problem: Sorting a list efficiently
+solution:
+    def quicksort(items: list[int]) -> list[int]:
+        effects: none
+        requires: len(items) < 10000
+        if len(items) <= 1:
+            return items
+
+        pivot = items[len(items) // 2]
+        left: list[int] = []
+        middle: list[int] = []
+        right: list[int] = []
+
+        for item in items:
+            if item < pivot:
+                left.append(item)
+            elif item == pivot:
+                middle.append(item)
+            else:
+                right.append(item)
+
+        return quicksort(left) + middle + quicksort(right)
+anti-pattern: unbounded recursion without requires clause
+anti-pattern: in-place mutation with side effects

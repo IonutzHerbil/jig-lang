@@ -1,0 +1,46 @@
+module shop.billing
+
+from shop.types import Customer, Money, PaymentError, UserId
+from std.record import replace
+from std.result import Err, Ok, Result
+
+ALICE: Customer = Customer(id=UserId(1), email="alice@example.com", balance=Money(1000))
+
+
+def charge(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
+    """Deduct an amount from a customer's balance."""
+    effects: none
+    requires: amount > Money(0)
+    ensures: result.is_err() or result.value.balance >= Money(0)
+    examples:
+        charge(ALICE, Money(300)) -> Ok(replace(ALICE, balance=Money(700)))
+        charge(ALICE, Money(5000)) -> Err(PaymentError.INSUFFICIENT_FUNDS)
+        charge(ALICE, Money(0)) -> rejected
+    if customer.balance < amount:
+        return Err(PaymentError.INSUFFICIENT_FUNDS)
+    return Ok(replace(customer, balance=customer.balance - amount))
+
+
+def charge_twice(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
+    """Charge the same amount twice, stopping at the first failure."""
+    effects: none
+    requires: amount > Money(0)
+    examples:
+        charge_twice(ALICE, Money(400)) -> Ok(replace(ALICE, balance=Money(200)))
+        charge_twice(ALICE, Money(600)) -> Err(PaymentError.INSUFFICIENT_FUNDS)
+        charge_twice(ALICE, Money(0)) -> rejected
+    once = charge(customer, amount)?
+    return charge(once, amount)
+
+
+def describe(error: PaymentError) -> str:
+    """Human-readable message for a payment error."""
+    effects: none
+    examples:
+        describe(PaymentError.INSUFFICIENT_FUNDS) -> "Not enough balance"
+        describe(PaymentError.INVALID_AMOUNT) -> "Amount must be positive"
+    match error:
+        case PaymentError.INSUFFICIENT_FUNDS:
+            return "Not enough balance"
+        case PaymentError.INVALID_AMOUNT:
+            return "Amount must be positive"

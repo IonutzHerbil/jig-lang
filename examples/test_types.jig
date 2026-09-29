@@ -1,0 +1,62 @@
+module test_types
+
+from std.option import Nothing, Option, Some
+from std.result import Err, Ok, Result
+
+type UserId = UserId(int)
+type Name = Name(str)
+type Score = Score(float)
+
+
+def builtin_types(a: int, b: str, c: float, d: bool, e: bytes) -> str:
+    """Test all primitive types."""
+    effects: none
+    examples:
+        builtin_types(1, "hi", 3.14, True, b"data") -> "ok"
+    return "ok"
+
+
+def collections(nums: list[int], scores: dict[str, int], tags: set[str]) -> int:
+    """Test collection types."""
+    effects: none
+    examples:
+        collections([1, 2, 3], {"a": 10}, {"x", "y"}) -> 6
+    return len(nums) + len(scores) + len(tags)
+
+
+def generic_result(x: int) -> Result[str, int]:
+    """Test Result with any types."""
+    effects: none
+    examples:
+        generic_result(5) -> Ok("five")
+        generic_result(0) -> Err(404)
+    if x == 0:
+        return Err(404)
+    return Ok("five")
+
+
+def generic_option(x: int) -> Option[str]:
+    """Test Option with any type."""
+    effects: none
+    examples:
+        generic_option(5) -> Some("five")
+        generic_option(0) -> Nothing
+    if x == 0:
+        return Nothing
+    return Some("five")
+
+
+def nested_generics(x: int) -> list[Result[str, int]]:
+    """Test nested generic types."""
+    effects: none
+    examples:
+        nested_generics(2) -> [Ok("a"), Ok("b")]
+    return [Ok("a"), Ok("b")]
+
+
+def tuple_type(x: int) -> tuple[str, int, bool]:
+    """Test tuple types."""
+    effects: none
+    examples:
+        tuple_type(5) -> ("five", 5, True)
+    return ("five", x, True)
