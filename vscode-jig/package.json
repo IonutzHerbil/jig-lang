@@ -98,6 +98,13 @@
         "label": "Jig File Icons",
         "path": "./icons/jig-icon-theme.json"
       }
+    ],
+    "themes": [
+      {
+        "label": "Jig Spec Focus",
+        "uiTheme": "vs-dark",
+        "path": "./themes/jig-spec-focus-color-theme.json"
+      }
     ]
   }
 }

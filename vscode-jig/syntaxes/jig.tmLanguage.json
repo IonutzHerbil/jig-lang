@@ -7,6 +7,8 @@
     { "include": "#module" },
     { "include": "#imports" },
     { "include": "#type-definitions" },
+    { "include": "#function-spec" },
+    { "include": "#spec-keywords" },
     { "include": "#function-definitions" },
     { "include": "#keywords" },
     { "include": "#literals" },
@@ -22,9 +24,15 @@
           "match": "#.*$"
         },
         {
-          "name": "comment.block.jig",
+          "name": "string.quoted.docstring.jig markup.italic",
           "begin": "\"\"\"",
-          "end": "\"\"\""
+          "end": "\"\"\"",
+          "patterns": [
+            {
+              "name": "markup.bold",
+              "match": "\\b[A-Z][A-Za-z ]+\\b"
+            }
+          ]
         }
       ]
     },
@@ -79,30 +87,47 @@
         }
       ]
     },
+    "function-spec": {
+      "patterns": [
+        {
+          "match": "^\\s*(effects:.*?)$",
+          "name": "markup.bold.effects-line.jig constant.language.effect-declaration"
+        },
+        {
+          "match": "^\\s*(requires:.*?)$",
+          "name": "markup.bold.requires-line.jig keyword.control.requires-declaration"
+        },
+        {
+          "match": "^\\s*(ensures:.*?)$",
+          "name": "markup.bold.ensures-line.jig keyword.control.ensures-declaration"
+        },
+        {
+          "match": "^\\s*(examples:.*?)$",
+          "name": "markup.bold.examples-line.jig constant.language.examples-declaration"
+        }
+      ]
+    },
+    "spec-keywords": {
+      "patterns": [
+        {
+          "match": "\\b(none|net|db|log|time|random|unsafe)\\b",
+          "name": "constant.language.effect.jig markup.italic"
+        }
+      ]
+    },
     "function-definitions": {
       "patterns": [
         {
-          "match": "\\b(def)\\s+([a-z_][a-zA-Z0-9_]*)\\s*\\(",
-          "captures": {
-            "1": { "name": "keyword.declaration.function.jig" },
-            "2": { "name": "entity.name.function.jig" }
-          }
-        },
-        {
-          "match": "\\b(effects|requires|ensures|examples):",
-          "name": "keyword.other.special.jig"
+          "match": "^\\s*(def\\s+[a-z_][a-zA-Z0-9_]*\\s*\\([^)]*\\)\\s*(->[^:]+)?):.*$",
+          "name": "entity.name.function.signature.jig markup.heading.function-signature"
         }
       ]
     },
     "keywords": {
       "patterns": [
         {
-          "name": "keyword.control.jig",
+          "name": "keyword.control.jig comment.line",
           "match": "\\b(if|elif|else|for|in|return|match|case|break|continue)\\b"
-        },
-        {
-          "name": "keyword.other.jig",
-          "match": "\\b(none|net|db|log|time|random|unsafe)\\b"
         },
         {
           "name": "constant.language.jig",

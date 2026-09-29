@@ -1,0 +1,149 @@
+{
+  "name": "Jig Spec Focus",
+  "type": "dark",
+  "semanticHighlighting": true,
+  "colors": {
+    "editor.background": "#1e1e1e",
+    "editor.foreground": "#d4d4d4",
+    "editorLineNumber.foreground": "#858585",
+    "editorLineNumber.activeForeground": "#c6c6c6"
+  },
+  "tokenColors": [
+    {
+      "name": "Comment",
+      "scope": ["comment", "punctuation.definition.comment"],
+      "settings": {
+        "foreground": "#6A9955"
+      }
+    },
+    {
+      "name": "Function Signature (ENTIRE LINE - Interface)",
+      "scope": [
+        "entity.name.function.signature.jig",
+        "markup.heading.function-signature"
+      ],
+      "settings": {
+        "foreground": "#4FC3F7",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Effects Declaration (ENTIRE LINE)",
+      "scope": [
+        "constant.language.effect-declaration",
+        "markup.bold.effects-line.jig"
+      ],
+      "settings": {
+        "foreground": "#FFD93D",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Requires Declaration (ENTIRE LINE)",
+      "scope": [
+        "keyword.control.requires-declaration",
+        "markup.bold.requires-line.jig"
+      ],
+      "settings": {
+        "foreground": "#FF6B6B",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Ensures Declaration (ENTIRE LINE)",
+      "scope": [
+        "keyword.control.ensures-declaration",
+        "markup.bold.ensures-line.jig"
+      ],
+      "settings": {
+        "foreground": "#FF8566",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Examples Declaration (ENTIRE LINE)",
+      "scope": [
+        "constant.language.examples-declaration",
+        "markup.bold.examples-line.jig"
+      ],
+      "settings": {
+        "foreground": "#A78BFA",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Docstrings (IMPORTANT)",
+      "scope": ["string.quoted.docstring.jig"],
+      "settings": {
+        "foreground": "#A8E6CF",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "name": "Type Names",
+      "scope": ["entity.name.type.jig"],
+      "settings": {
+        "foreground": "#4EC9B0"
+      }
+    },
+    {
+      "name": "Implementation Keywords (DIMMED)",
+      "scope": ["keyword.control.jig"],
+      "settings": {
+        "foreground": "#505050",
+        "fontStyle": ""
+      }
+    },
+    {
+      "name": "Operators (DIMMED)",
+      "scope": ["keyword.operator"],
+      "settings": {
+        "foreground": "#606060"
+      }
+    },
+    {
+      "name": "Strings",
+      "scope": ["string.quoted"],
+      "settings": {
+        "foreground": "#CE9178"
+      }
+    },
+    {
+      "name": "Numbers",
+      "scope": ["constant.numeric"],
+      "settings": {
+        "foreground": "#B5CEA8"
+      }
+    },
+    {
+      "name": "Type Annotations",
+      "scope": ["support.type"],
+      "settings": {
+        "foreground": "#4EC9B0"
+      }
+    },
+    {
+      "name": "Function Declaration",
+      "scope": ["keyword.declaration.function"],
+      "settings": {
+        "foreground": "#569CD6",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Type Declaration",
+      "scope": ["keyword.declaration.type", "keyword.declaration.record", "keyword.declaration.enum"],
+      "settings": {
+        "foreground": "#569CD6",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Module/Import",
+      "scope": ["keyword.control.module", "keyword.control.import"],
+      "settings": {
+        "foreground": "#C586C0"
+      }
+    }
+  ]
+}

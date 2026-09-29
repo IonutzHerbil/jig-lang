@@ -4,14 +4,47 @@ Syntax highlighting and language support for **Jig** - a language where humans d
 
 ## Features
 
-- **Syntax highlighting** for `.jig` files
-- **Syntax highlighting** for `.manifest` files (library API definitions)
-- **Syntax highlighting** for `.decision` files (architectural decisions)
-- **Syntax highlighting** for `.pattern` files (canonical implementations)
+- **Spec-focused syntax highlighting** - Emphasizes what humans need to understand (contracts, effects, examples), dims LLM-generated implementation
+- **Custom color theme "Jig Spec Focus"** - Designed for reading specs, not writing code
+- **Syntax highlighting** for `.jig`, `.manifest`, `.decision`, `.pattern` files
 - **File icons** for all Jig file types
 - **Auto-completion** for brackets, quotes, and keywords
 - **Comment toggling** (Ctrl+/ or Cmd+/)
 - **Auto-indentation** based on Jig syntax
+
+## Why Different Highlighting?
+
+**Traditional:** Syntactic highlighting (color each keyword, operator, identifier)
+**Jig:** Semantic block highlighting (color each meaningful unit)
+
+### The Difference
+
+**Traditional Approach:**
+```
+def mix_types(m: Money, p: Points) -> Money:
+└─┘ └───────┘  └─────┘  └─────┘  └┘ └────┘
+6 different colors = cognitive overhead
+```
+
+**Jig Approach:**
+```
+def mix_types(m: Money, p: Points) -> Money:
+└──────────────────────────────────────────┘
+ONE color = "this is the interface"
+```
+
+### What Each Color Means
+
+**BRIGHT (read these):**
+- 🔵 **Entire function signature** - The interface
+- 🔴 **Entire `requires:` line** - Contract (precondition)
+- 🟠 **Entire `ensures:` line** - Contract (postcondition)
+- 🟡 **Entire `effects:` line** - Side effects declaration
+- 🟣 **Entire `examples:` line** - Test cases
+- 🟢 **Entire docstring** - Human explanation
+
+**DIM (skim these):**
+- ⚫ **Implementation** - LLM-generated, verified by compiler
 
 ## Supported File Types
 
@@ -78,7 +111,9 @@ Jig is a programming language built for LLMs to generate code with mechanical ve
 
 Learn more at [github.com/yourusername/jig-lang](https://github.com/yourusername/jig-lang)
 
-## Example
+## Example - What You See
+
+**Semantic Block Highlighting** - Each line is one semantic unit:
 
 ```jig
 module shop.payment_processor
@@ -88,29 +123,73 @@ from shop.types import Money
 from std.result import Result, Ok, Err
 
 def process_payment(amount: Money, customer_id: str) -> Result[ChargeId, str]:
+└──────────────────────────────────────────────────────────────────────────────┘
+🔵 ENTIRE LINE = Function interface (what it accepts/returns)
+
     """Process payment via Stripe."""
+    └───────────────────────────────┘
+    🟢 ENTIRE LINE = Human explanation
+
     effects: net, log
+    └───────────────┘
+    🟡 ENTIRE LINE = Side effects declaration
+
     requires: amount.value > 0
+    └─────────────────────────┘
+    🔴 ENTIRE LINE = Contract (precondition)
+
     examples:
+    └───────┘
+    🟣 ENTIRE LINE = Test cases header
         process_payment(Money(1000), "cust_123") -> Ok(ChargeId("ch_abc"))
     
-    # LLM generates implementation here
-    # - Uses only APIs from lib/stripe.manifest
-    # - Follows .decisions/ architectural rules
-    # - Uses patterns from .patterns/
+    # Implementation (dimmed - LLM generated)
+    for attempt in range(3):                       ← ⚫ GRAY
+        result = charge(amount.value, customer_id) ← ⚫ GRAY
+        if result.is_ok():                         ← ⚫ GRAY
+            return result                          ← ⚫ GRAY
+    return Err("payment failed")                   ← ⚫ GRAY
 ```
 
-## Syntax Highlighting Preview
+**The idea:**
+- Each **semantic unit** (signature, contract, effect) = **one color**
+- Your brain reads **meaning**, not **syntax**
+- Implementation fades to background
 
-The extension provides rich syntax highlighting for:
+## Highlighting Strategy
 
-- **Keywords**: `def`, `type`, `record`, `enum`, `if`, `for`, `match`, `case`
-- **Special keywords**: `effects`, `requires`, `ensures`, `examples`
-- **Types**: `int`, `str`, `Result`, `Option`, `Some`, `Err`
-- **Effects**: `none`, `net`, `db`, `log`, `time`, `random`
-- **Manifest keywords**: `lib`, `declare`
-- **Decision fields**: `decision`, `context`, `rationale`, `enforcement`
-- **Pattern fields**: `pattern`, `problem`, `solution`, `anti-pattern`
+### What Stands Out (BRIGHT)
+
+**Spec keywords** - Red, bold:
+- `requires:` - Preconditions
+- `ensures:` - Postconditions  
+- `effects:` - Side effects
+- `examples:` - Test cases
+
+**Effect values** - Yellow, italic:
+- `none`, `net`, `db`, `log`, `time`, `random`
+
+**Function names** - Cyan, bold:
+- `def process_payment(...)` - What does this do?
+
+**Docstrings** - Green, italic:
+- `"""Process payment via Stripe."""` - Human explanation
+
+### What's Dimmed (GRAY)
+
+**Implementation keywords**:
+- `if`, `for`, `return` - LLM-generated details
+
+**Operators**:
+- `+`, `-`, `==` - Not important for understanding the spec
+
+### Using the Custom Theme
+
+After installing:
+1. Ctrl+Shift+P → "Preferences: Color Theme"
+2. Select "Jig Spec Focus"
+
+This theme is specifically designed for reading Jig specs, not writing code.
 
 ## Contributing
 
