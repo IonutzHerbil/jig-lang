@@ -1,8 +1,10 @@
 # Jig Language Reference v0.1
 
-**A Python-shaped language built for LLMs to write and compilers to verify.**
+**A language where humans describe intent and LLMs generate all code.**
 
 Named after the woodworking jig: a guide that makes every cut come out the same.
+
+**You describe. LLM codes. Compiler verifies.**
 
 ## Philosophy
 
@@ -13,6 +15,70 @@ Jig makes one guarantee: **Any program that passes `jig check` has:**
 - ✅ Effect tracking (pure functions stay pure)
 - ✅ Runtime contract enforcement (requires/ensures checked)
 - ✅ Transpiles to clean Python 3.12+ with zero dependencies
+
+## How Development Works
+
+**Jig is designed for LLMs to write code, not humans.**
+
+### The Workflow
+
+**Traditional programming:**
+```
+Human writes implementation code manually
+```
+
+**Jig programming:**
+```
+Human describes intent/spec → LLM generates ALL code → Compiler verifies
+```
+
+### Three Levels of Development
+
+**Level 1: High-level intent (preferred)**
+```
+Human: "Add a retry mechanism with exponential backoff"
+LLM:  Generates complete function (signature + contracts + examples + implementation)
+```
+
+**Level 2: Detailed spec**
+```python
+Human writes:
+    def retry(fn: callable, max_attempts: int) -> Result[T, Error]:
+        """Retry fn up to max_attempts with exponential backoff."""
+        effects: time, log
+        requires: max_attempts > 0
+        requires: max_attempts <= 10
+        examples:
+            retry(lambda: Ok(5), 3) -> Ok(5)
+            retry(lambda: Err("fail"), 1) -> Err("fail")
+        # LLM: Generate implementation
+
+LLM:  Generates implementation that satisfies spec
+```
+
+**Level 3: Feature request**
+```
+Human: "Add shopping cart to e-commerce app"
+LLM:  Generates entire feature (types, functions, tests, implementations)
+```
+
+### Key Insight
+
+**Humans never write implementation code.** They write:
+- Natural language intent ("I need X")
+- Function specs (signature + contracts + examples)
+- Expected behavior (requires/ensures clauses)
+- Test cases (examples)
+
+**LLMs generate all implementation code.** They:
+- Read the spec
+- Check `.patterns/` for canonical approaches
+- Check `.decisions/` for architectural constraints
+- Check `lib/*.manifest` for available APIs
+- Generate code that satisfies everything
+- Compiler verifies it mechanically
+
+**Result:** Code that compiles is guaranteed correct.
 
 ## Quick Start
 

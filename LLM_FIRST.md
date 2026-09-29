@@ -1,8 +1,51 @@
 # Jig: Built for LLMs
 
-**What makes Jig different from "strict Python for humans"**
+**A language where humans describe intent and LLMs generate all code**
 
-## The Problem
+## The Paradigm Shift
+
+### Traditional Programming
+```
+Human writes code manually
+    ↓
+Computer executes it
+    ↓
+Hope it's correct
+```
+
+### Jig Programming
+```
+Human describes intent/spec
+    ↓
+LLM generates ALL code
+    ↓
+Compiler mechanically verifies
+    ↓
+Guaranteed correct
+```
+
+**Examples:**
+
+**Human says:** "I need a shopping cart feature"
+→ **LLM generates:** Types, functions, contracts, tests, **implementations**
+
+**Human says:** "Add retry logic with exponential backoff"
+→ **LLM generates:** Complete implementation following `.patterns/retry-with-backoff.pattern`
+
+**Human writes spec:**
+```python
+def quicksort(items: list[int]) -> list[int]:
+    """Sort using quicksort."""
+    effects: none
+    examples:
+        quicksort([3,1,4]) -> [1,3,4]
+    # LLM generates implementation
+```
+→ **LLM generates:** Implementation that satisfies spec
+
+---
+
+## The Problem With LLMs
 
 Human programmers:
 - Read documentation
@@ -16,9 +59,7 @@ LLMs:
 - Forget past architectural decisions
 - Improvise instead of following patterns
 
-## The Solution: Mechanically Enforced Constraints
-
-Jig doesn't rely on the LLM remembering rules. The tools **prevent** mistakes mechanically.
+**Jig's solution:** Don't rely on LLM memory. **Mechanically prevent mistakes.**
 
 ---
 

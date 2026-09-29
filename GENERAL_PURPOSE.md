@@ -402,55 +402,84 @@ def apply_move(board: Board, move: Move) -> Option[Board]:
 
 ## The Development Workflow (Generic)
 
-### Scenario: Implement Quicksort
+**CRITICAL: Humans write INTENT and SPECS. LLMs generate ALL CODE.**
 
-**Step 1: Check patterns**
-```bash
-$ cat .patterns/quicksort.pattern
-# Shows canonical implementation
-```
+### Level 1: High-Level Intent (Preferred)
 
-**Step 2: Check decisions**
-```bash
-$ cat .decisions/algorithms.decision
-# "Use iterative or bounded recursion"
-$ cat .decisions/loops.decision
-# "Use for with range(), not while"
-```
+**Human:** "I need a quicksort function for integers"
 
-**Step 3: Write code**
+**LLM does:**
+1. Checks `.patterns/quicksort.pattern` → canonical implementation
+2. Checks `.decisions/algorithms.decision` → must use bounded loops
+3. Generates complete function:
+   ```python
+   def quicksort(items: list[int]) -> list[int]:
+       """Sort using quicksort algorithm with middle pivot."""
+       effects: none
+       requires: len(items) < 10000
+       examples:
+           quicksort([3, 1, 4, 1, 5]) -> [1, 1, 3, 4, 5]
+           quicksort([]) -> []
+       
+       if len(items) <= 1:
+           return items
+       
+       pivot = items[len(items) // 2]
+       left = [x for x in items if x < pivot]
+       middle = [x for x in items if x == pivot]
+       right = [x for x in items if x > pivot]
+       
+       return quicksort(left) + middle + quicksort(right)
+   ```
+4. Compiler verifies: examples pass, contracts hold
+5. Cached by content hash
+
+**Next time:** "I need quicksort for integers" → Retrieved from cache (exact same code)
+
+---
+
+### Level 2: Detailed Spec (When You Need Control)
+
+**Human writes spec only:**
 ```python
-def quicksort(items: list[int]) -> list[int]:
-    """Sort using quicksort."""
+def binary_search(items: list[int], target: int) -> Option[int]:
+    """Find target in sorted list using binary search."""
     effects: none
-    requires: len(items) < 10000  # Bounded
+    requires: len(items) < 100000
+    requires: is_sorted(items)  # Precondition
     examples:
-        quicksort([3, 1, 4, 1, 5]) -> [1, 1, 3, 4, 5]
-        quicksort([]) -> []
-    
-    if len(items) <= 1:
-        return items
-    
-    pivot = items[len(items) // 2]
-    left = [x for x in items if x < pivot]
-    middle = [x for x in items if x == pivot]
-    right = [x for x in items if x > pivot]
-    
-    return quicksort(left) + middle + quicksort(right)
+        binary_search([1, 3, 5, 7, 9], 5) -> Some(2)
+        binary_search([1, 3, 5, 7, 9], 4) -> Nothing
+        binary_search([], 5) -> Nothing
+    # LLM: Generate implementation here
 ```
 
-**Step 4: Check**
-```bash
-$ jig check algorithms/sorting.jig --pretty
-✅ ok: 0 errors, 0 warnings, examples 2/2 passed
-```
+**LLM does:**
+1. Reads signature, contracts, examples
+2. Checks `.patterns/binary-search.pattern`
+3. Checks `.decisions/algorithms.decision` → bounded loops only
+4. Generates implementation that satisfies the spec
+5. Compiler runs examples, verifies contracts
+6. Cached
 
-**Step 5: Cached**
-```
-Content hash: 8f3a7e2c9d1b
-Stored in .jig-cache/generated/
-Next time same spec → retrieved
-```
+---
+
+### Level 3: Feature Request (Highest Level)
+
+**Human:** "Add a shopping cart feature to my e-commerce app"
+
+**LLM does:**
+1. Checks `.decisions/` → architectural rules
+2. Checks `.patterns/` → state management patterns
+3. Checks `lib/*.manifest` → available APIs (payment, inventory, etc.)
+4. Generates ENTIRE feature:
+   - Types: `type CartId = CartId(str)`, `record Cart`, `record CartItem`
+   - Functions: `create_cart()`, `add_item()`, `remove_item()`, `checkout()`
+   - All signatures, contracts, examples, **implementations**
+5. Compiler verifies everything
+6. Cached
+
+**Key insight:** Human never wrote a single line of implementation!
 
 ---
 
@@ -469,19 +498,37 @@ The LLM-first features are **domain-agnostic**:
 
 ## What Makes Jig Different
 
-| Language | Purpose | Enforcement |
-|----------|---------|-------------|
-| **Python** | General-purpose | Hope & convention |
-| **TypeScript** | General-purpose with types | Type checking |
-| **Rust** | Systems programming | Borrow checker |
-| **Haskell** | Functional programming | Type system + purity |
-| **Jig** | **LLM-first general-purpose** | Manifests + Decisions + Patterns + Cache + Types + Effects + Contracts + Examples |
+| Language | Who Writes Code | How It's Verified |
+|----------|----------------|-------------------|
+| **Python** | Human writes implementation | Runtime errors, hope |
+| **TypeScript** | Human writes implementation | Type checker |
+| **Rust** | Human writes implementation | Borrow checker + types |
+| **Haskell** | Human writes implementation | Type system + purity |
+| **Jig** | **LLM generates implementation from intent/specs** | **Manifests + Decisions + Patterns + Cache + Types + Effects + Contracts + Examples** |
 
-Jig adds **LLM-specific enforcement** on top of traditional type/contract checking:
-- Can't hallucinate (manifests)
-- Can't forget decisions (decision notebook)
-- Can't improvise (patterns)
-- Can't drift (generation cache)
+### The Paradigm Shift
+
+**Traditional languages:**
+- Human: Writes code manually, line by line
+- Computer: Runs it, maybe catches type errors
+- Result: Hope it's correct
+
+**Jig:**
+- Human: Describes intent ("add shopping cart") OR spec (signature + behavior + tests)
+- LLM: Generates ALL implementation code
+- Compiler: Mechanically verifies against constraints
+- Cache: Ensures same intent = same code (no drift)
+
+### What This Means
+
+The LLM-first features are **constraints on code generation**:
+- **Manifests**: LLM can't use APIs that don't exist (no hallucinations)
+- **Decisions**: LLM must follow architectural rules (no forgetting choices)
+- **Patterns**: LLM uses canonical implementations (no improvising)
+- **Cache**: Same spec always generates identical code (no drift)
+- **Contracts**: Generated code must satisfy requires/ensures (no bugs)
+- **Examples**: Generated code must pass tests (no wrong behavior)
+- **Effects**: Generated code must declare side effects (no hidden I/O)
 
 ---
 
@@ -491,12 +538,26 @@ Jig adds **LLM-specific enforcement** on top of traditional type/contract checki
 
 It's a **complete general-purpose programming language** where:
 - ✅ You can build **anything** (algorithms, data structures, apps, games, tools)
-- ✅ LLM-first features apply to **all code** (not just API wrappers)
+- ✅ **Humans describe WHAT** (intent, specs, behavior, tests)
+- ✅ **LLMs generate HOW** (all implementation code)
+- ✅ **Compiler mechanically verifies** (against manifests, decisions, patterns, contracts, examples)
 - ✅ **No compromise** on what you can express
-- ✅ Mechanical enforcement prevents LLM mistakes in **any** domain
+- ✅ **No manual coding** - just describe what you need
 
-**The vision**: A language where code that compiles is provably correct, regardless of what you're building.
+### The Vision
+
+**Traditional:** Human writes code → Computer runs it → Hope it's correct
+
+**Jig:** Human describes intent → LLM generates code → Compiler proves correctness
+
+A language where:
+- Code that compiles is **mechanically verified** to be correct
+- The LLM can't make mistakes (hallucinations, forgotten decisions, drift)
+- Development is **describing what you want**, not writing how to do it
+- Works for **any** domain (not just API integration)
 
 ---
 
 Jig - **General-Purpose Programming, Built for LLMs**
+
+**You describe. LLM codes. Compiler verifies.**
