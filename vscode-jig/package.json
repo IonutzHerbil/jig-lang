@@ -1,0 +1,103 @@
+{
+  "name": "jig-lang",
+  "displayName": "Jig Language Support",
+  "description": "Syntax highlighting and language support for Jig - a language where humans describe intent and LLMs generate code",
+  "version": "0.1.0",
+  "publisher": "jig-lang",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "jig",
+    "llm",
+    "code generation",
+    "manifests",
+    "python"
+  ],
+  "icon": "icons/jig-icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/jig-lang"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "jig",
+        "aliases": [
+          "Jig",
+          "jig"
+        ],
+        "extensions": [
+          ".jig"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/jig-file-icon.svg",
+          "dark": "./icons/jig-file-icon.svg"
+        }
+      },
+      {
+        "id": "jig-manifest",
+        "aliases": [
+          "Jig Manifest"
+        ],
+        "extensions": [
+          ".manifest"
+        ],
+        "configuration": "./manifest-configuration.json"
+      },
+      {
+        "id": "jig-decision",
+        "aliases": [
+          "Jig Decision"
+        ],
+        "extensions": [
+          ".decision"
+        ],
+        "configuration": "./decision-configuration.json"
+      },
+      {
+        "id": "jig-pattern",
+        "aliases": [
+          "Jig Pattern"
+        ],
+        "extensions": [
+          ".pattern"
+        ],
+        "configuration": "./pattern-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "jig",
+        "scopeName": "source.jig",
+        "path": "./syntaxes/jig.tmLanguage.json"
+      },
+      {
+        "language": "jig-manifest",
+        "scopeName": "source.jig.manifest",
+        "path": "./syntaxes/manifest.tmLanguage.json"
+      },
+      {
+        "language": "jig-decision",
+        "scopeName": "source.jig.decision",
+        "path": "./syntaxes/decision.tmLanguage.json"
+      },
+      {
+        "language": "jig-pattern",
+        "scopeName": "source.jig.pattern",
+        "path": "./syntaxes/pattern.tmLanguage.json"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "jig-icons",
+        "label": "Jig File Icons",
+        "path": "./icons/jig-icon-theme.json"
+      }
+    ]
+  }
+}

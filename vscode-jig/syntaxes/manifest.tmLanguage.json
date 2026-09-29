@@ -1,0 +1,91 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Jig Manifest",
+  "scopeName": "source.jig.manifest",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#lib-declaration" },
+    { "include": "#type-definitions" },
+    { "include": "#function-declarations" },
+    { "include": "#keywords" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.jig",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "lib-declaration": {
+      "patterns": [
+        {
+          "match": "^(lib)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.lib.jig" },
+            "2": { "name": "entity.name.namespace.jig" }
+          }
+        }
+      ]
+    },
+    "type-definitions": {
+      "patterns": [
+        {
+          "match": "\\b(type)\\s+([A-Z][a-zA-Z0-9]*)\\s*=\\s*([A-Z][a-zA-Z0-9]*)\\(([a-z]+)\\)",
+          "captures": {
+            "1": { "name": "keyword.declaration.type.jig" },
+            "2": { "name": "entity.name.type.jig" },
+            "3": { "name": "entity.name.type.jig" },
+            "4": { "name": "support.type.primitive.jig" }
+          }
+        },
+        {
+          "match": "\\b(record)\\s+([A-Z][a-zA-Z0-9]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.record.jig" },
+            "2": { "name": "entity.name.type.jig" }
+          }
+        },
+        {
+          "match": "\\b(enum)\\s+([A-Z][a-zA-Z0-9]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.enum.jig" },
+            "2": { "name": "entity.name.type.jig" }
+          }
+        }
+      ]
+    },
+    "function-declarations": {
+      "patterns": [
+        {
+          "match": "\\b(declare)\\s+([a-z_][a-zA-Z0-9_]*)\\s*\\(",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.jig" },
+            "2": { "name": "entity.name.function.jig" }
+          }
+        },
+        {
+          "match": "\\b(effects):",
+          "name": "keyword.other.special.jig"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.other.jig",
+          "match": "\\b(none|net|db|log|time|random|unsafe)\\b"
+        },
+        {
+          "name": "support.type.primitive.jig",
+          "match": "\\b(int|str|float|bool|bytes|list|dict|set|tuple)\\b"
+        },
+        {
+          "name": "support.type.stdlib.jig",
+          "match": "\\b(Result|Option)\\b"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "iconDefinitions": {
+    "jig-file": {
+      "iconPath": "./jig-file-icon.svg"
+    }
+  },
+  "fileExtensions": {
+    "jig": "jig-file",
+    "manifest": "jig-file",
+    "decision": "jig-file",
+    "pattern": "jig-file",
+    "fake": "jig-file"
+  }
+}

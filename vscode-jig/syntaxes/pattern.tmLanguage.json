@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Jig Pattern",
+  "scopeName": "source.jig.pattern",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#fields" },
+    { "include": "source.jig" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.jig",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "fields": {
+      "patterns": [
+        {
+          "match": "^(pattern|problem|solution|anti-pattern):",
+          "name": "keyword.other.field.jig"
+        }
+      ]
+    }
+  }
+}
