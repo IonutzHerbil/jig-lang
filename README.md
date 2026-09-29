@@ -1,9 +1,12 @@
 # Jig v0.1
 
-A Python-shaped language built for LLMs to write and compilers to verify.
-Named after the woodworking jig: a guide that makes every cut come out the same.
+A Python-shaped language where a human describes what they want, an LLM writes the code,
+and the checker verifies it. Named after the woodworking jig: a guide that makes every cut
+come out the same.
 
-Any Jig program that passes `jig check` has no invented names, fields, variants,
+The human's side is intent: signatures, docstrings, contracts, examples, and project-level
+ground truth (library manifests, recorded decisions, canonical patterns). The model's side
+is everything else. The checker is what makes that safe: any Jig program that passes `jig check` has no invented names, fields, variants,
 imports, or effects, and every function has passed its own examples.
 It transpiles to plain Python 3.12+ with zero dependencies.
 
@@ -11,7 +14,7 @@ It transpiles to plain Python 3.12+ with zero dependencies.
 
 ```bash
 pip install -e .                       # or: python -m jig ...
-jig check examples/shop --pretty       # 0 errors, 10/10 examples passed
+jig check examples/datastructures --pretty         # a passing project
 jig check examples/shop examples/broken --pretty   # see the checker catch LLM mistakes
 jig interface examples/shop            # the low-context view for agents
 jig run examples/shop --entry shop.app.main
@@ -57,6 +60,9 @@ def charge(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
 | Contracts | `requires`/`ensures` enforced at runtime, examples run on every check, Err and `rejected` coverage | C001-C005 |
 | Forbidden | `eval`, `getattr`, classes, decorators, `import x`, aliases, re-exports, exceptions, `None`, `while`, globals, `*args`, mutable defaults, nested functions, free-text comments | F001-F016 |
 | Determinism | canonical formatting, `match` over long if/elif chains, fixed hash seed and fixed `Ctx` in examples | D001, D003 |
+| Project files | `lib/*.manifest` exports and effects, `.decisions/*.decision` newtype rules | M001-M003, DEC001-DEC002 |
+
+Full reference: [LANGUAGE.md](LANGUAGE.md). Every code: [ERROR_CODES.md](ERROR_CODES.md).
 
 ## Language summary
 
@@ -70,8 +76,10 @@ def charge(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
 
 ## Not yet implemented
 
-Library manifests (`lib.*`), `@endpoint`/`@store`/`@job`, flow-sensitive type inference,
-the generation cache, constrained decoding, `jig serve` (MCP), `jig spec`, and the Sentry integration.
+A runtime for `lib.*` manifests (examples that call them cannot run yet), checking
+argument types of `lib.*` calls, enforcing `.pattern` files, `@endpoint`/`@store`/`@job`,
+flow-sensitive type inference, the generation cache, constrained decoding, `jig serve` (MCP),
+`jig spec`, and the Sentry integration.
 Attribute checks apply when the checker knows the value's type (parameters, records, constants,
 constructor results); values of unknown type are not yet checked.
 
@@ -80,6 +88,8 @@ constructor results); values of unknown type are not yet checked.
 ```
 jig/preprocess.py   Jig syntax -> parseable Python, line numbers preserved
 jig/checker.py      all static checks
+jig/manifest.py     lib/*.manifest parser
+jig/decisions.py    .decisions/*.decision parser
 jig/transpiler.py   checked modules -> Python package
 jig/examples.py     runs examples in a subprocess (PYTHONHASHSEED=0)
 jig/jig_runtime.py  Result, Option, newtypes, records, contracts, Ctx

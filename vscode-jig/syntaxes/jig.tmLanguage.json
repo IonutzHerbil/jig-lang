@@ -3,18 +3,39 @@
   "name": "Jig",
   "scopeName": "source.jig",
   "patterns": [
-    { "include": "#comments" },
-    { "include": "#module" },
-    { "include": "#imports" },
-    { "include": "#type-definitions" },
-    { "include": "#function-spec" },
-    { "include": "#spec-keywords" },
-    { "include": "#function-definitions" },
-    { "include": "#keywords" },
-    { "include": "#literals" },
-    { "include": "#operators" },
-    { "include": "#builtin-types" },
-    { "include": "#function-calls" }
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#module"
+    },
+    {
+      "include": "#imports"
+    },
+    {
+      "include": "#type-definitions"
+    },
+    {
+      "include": "#function-spec"
+    },
+    {
+      "include": "#function-definitions"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#literals"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#builtin-types"
+    },
+    {
+      "include": "#function-calls"
+    }
   ],
   "repository": {
     "comments": {
@@ -24,15 +45,9 @@
           "match": "#.*$"
         },
         {
-          "name": "string.quoted.docstring.jig markup.italic",
+          "name": "string.quoted.docstring.jig",
           "begin": "\"\"\"",
-          "end": "\"\"\"",
-          "patterns": [
-            {
-              "name": "markup.bold",
-              "match": "\\b[A-Z][A-Za-z ]+\\b"
-            }
-          ]
+          "end": "\"\"\""
         }
       ]
     },
@@ -41,8 +56,12 @@
         {
           "match": "^(module)\\s+([a-zA-Z_][a-zA-Z0-9_.]*)",
           "captures": {
-            "1": { "name": "keyword.control.module.jig" },
-            "2": { "name": "entity.name.namespace.jig" }
+            "1": {
+              "name": "keyword.control.module.jig"
+            },
+            "2": {
+              "name": "entity.name.namespace.jig"
+            }
           }
         }
       ]
@@ -52,10 +71,18 @@
         {
           "match": "\\b(from)\\s+([a-zA-Z_][a-zA-Z0-9_.]*)\\s+(import)\\s+([a-zA-Z_][a-zA-Z0-9_,\\s]*)",
           "captures": {
-            "1": { "name": "keyword.control.import.jig" },
-            "2": { "name": "entity.name.namespace.jig" },
-            "3": { "name": "keyword.control.import.jig" },
-            "4": { "name": "entity.name.type.jig" }
+            "1": {
+              "name": "keyword.control.import.jig"
+            },
+            "2": {
+              "name": "entity.name.namespace.jig"
+            },
+            "3": {
+              "name": "keyword.control.import.jig"
+            },
+            "4": {
+              "name": "entity.name.type.jig"
+            }
           }
         }
       ]
@@ -65,24 +92,40 @@
         {
           "match": "\\b(type)\\s+([A-Z][a-zA-Z0-9]*)\\s*=\\s*([A-Z][a-zA-Z0-9]*)\\(([a-z]+)\\)",
           "captures": {
-            "1": { "name": "keyword.declaration.type.jig" },
-            "2": { "name": "entity.name.type.jig" },
-            "3": { "name": "entity.name.type.jig" },
-            "4": { "name": "support.type.primitive.jig" }
+            "1": {
+              "name": "keyword.declaration.type.jig"
+            },
+            "2": {
+              "name": "entity.name.type.jig"
+            },
+            "3": {
+              "name": "entity.name.type.jig"
+            },
+            "4": {
+              "name": "support.type.primitive.jig"
+            }
           }
         },
         {
           "match": "\\b(record)\\s+([A-Z][a-zA-Z0-9]*)",
           "captures": {
-            "1": { "name": "keyword.declaration.record.jig" },
-            "2": { "name": "entity.name.type.jig" }
+            "1": {
+              "name": "keyword.declaration.record.jig"
+            },
+            "2": {
+              "name": "entity.name.type.jig"
+            }
           }
         },
         {
           "match": "\\b(enum)\\s+([A-Z][a-zA-Z0-9]*)",
           "captures": {
-            "1": { "name": "keyword.declaration.enum.jig" },
-            "2": { "name": "entity.name.type.jig" }
+            "1": {
+              "name": "keyword.declaration.enum.jig"
+            },
+            "2": {
+              "name": "entity.name.type.jig"
+            }
           }
         }
       ]
@@ -104,14 +147,6 @@
         {
           "match": "^\\s*(examples:.*?)$",
           "name": "markup.bold.examples-line.jig constant.language.examples-declaration"
-        }
-      ]
-    },
-    "spec-keywords": {
-      "patterns": [
-        {
-          "match": "\\b(none|net|db|log|time|random|unsafe)\\b",
-          "name": "constant.language.effect.jig markup.italic"
         }
       ]
     },
@@ -169,12 +204,12 @@
     "operators": {
       "patterns": [
         {
-          "name": "keyword.operator.jig",
-          "match": "\\+|-|\\*|/|//|%|==|!=|<|>|<=|>=|and|or|not"
-        },
-        {
           "name": "keyword.operator.arrow.jig",
           "match": "->"
+        },
+        {
+          "name": "keyword.operator.jig",
+          "match": "//|==|!=|<=|>=|[-+*/%<>]|\b(and|or|not|is)\b"
         }
       ]
     },
@@ -183,7 +218,9 @@
         {
           "match": "\\b([a-z_][a-zA-Z0-9_]*)\\s*\\(",
           "captures": {
-            "1": { "name": "entity.name.function.call.jig" }
+            "1": {
+              "name": "entity.name.function.call.jig"
+            }
           }
         }
       ]

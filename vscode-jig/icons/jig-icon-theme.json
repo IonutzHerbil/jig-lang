@@ -8,7 +8,6 @@
     "jig": "jig-file",
     "manifest": "jig-file",
     "decision": "jig-file",
-    "pattern": "jig-file",
-    "fake": "jig-file"
+    "pattern": "jig-file"
   }
 }

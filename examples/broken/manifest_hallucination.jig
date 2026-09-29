@@ -1,4 +1,4 @@
-module test_manifest_hallucination
+module broken.manifest_hallucination
 
 from lib.stripe import Amount, charge, process_payment, refund_customer
 from std.result import Result

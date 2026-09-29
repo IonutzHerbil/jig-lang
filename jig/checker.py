@@ -17,8 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from . import std
+from .decisions import Decision, load_decisions
 from .diagnostics import Diagnostic, replace_fix
 from .formatter import first_difference, format_source
+from .manifest import Manifest, load_manifests
 from .preprocess import Preprocessed, preprocess
 
 SNAKE = re.compile(r"[a-z_][a-z0-9_]*$")
@@ -137,14 +139,25 @@ def _return_base(fi: FuncInfo | None) -> str | None:
     return base.id if isinstance(base, ast.Name) else None
 
 
+def _project_roots(files: list[Path]) -> list[Path]:
+    """The nearest ancestor of each file that holds lib/ or .decisions/."""
+    roots: set[Path] = set()
+    for f in files:
+        for d in Path(f).resolve().parents:
+            if (d / "lib").is_dir() or (d / ".decisions").is_dir():
+                roots.add(d)
+                break
+    return sorted(roots)
+
+
 # ---------------------------------------------------------------- project
 
 
 class Project:
     def __init__(self) -> None:
         self.modules: dict[str, ModuleInfo] = {}
-        self.manifests: dict[str, Any] = {}  # lib name -> Manifest
-        self.decisions: dict[str, Any] = {}  # decision id -> Decision
+        self.manifests: dict[str, Manifest] = {}
+        self.decisions: dict[str, Decision] = {}
         self.diags: list[Diagnostic] = []
 
     # -- diagnostics
@@ -187,24 +200,15 @@ class Project:
     # -- loading
 
     def load(self, files: Iterable[Path]) -> None:
-        # Load library manifests first
-        files_list = list(files)
-        if files_list:
-            project_root = files_list[0].parent
-            while project_root.parent != project_root:
-                if (project_root / "lib").exists():
-                    break
-                project_root = project_root.parent
+        files = list(files)
+        for root in _project_roots(files):
+            manifests, mdiags = load_manifests(root)
+            decisions, ddiags = load_decisions(root)
+            self.manifests.update(manifests)
+            self.decisions.update(decisions)
+            self.diags += mdiags + ddiags
 
-            from .manifest import load_manifests
-            from .decisions import load_decisions
-
-            self.manifests, manifest_diags = load_manifests(project_root)
-            self.decisions, decision_diags = load_decisions(project_root)
-            self.diags.extend(manifest_diags)
-            self.diags.extend(decision_diags)
-
-        for path in files_list:
+        for path in files:
             text = Path(path).read_text(encoding="utf-8")
             pre, pdiags = preprocess(text, str(path))
             name = pre.module or Path(path).stem
@@ -256,6 +260,9 @@ class Project:
             target_mod, target_name, _ = mod.imports[name]
             if target_mod in std.STD:
                 return ("std", target_mod, target_name) if target_name in std.STD[target_mod] else None
+            manifest = self.manifests.get(target_mod[4:]) if target_mod.startswith("lib.") else None
+            if manifest is not None:
+                return ("lib", manifest, target_name) if target_name in manifest.exports else None
             target = self.modules.get(target_mod)
             if target is not None:
                 return self.resolve(target, target_name, depth + 1)
@@ -343,22 +350,16 @@ class Project:
                 mod.newtypes[name] = base
                 if base not in std.PRIMITIVES:
                     self.diag("T001", f"newtype base must be one of {sorted(std.PRIMITIVES)}, got '{base}'", mod, stmt.lineno)
-
-                # Check decisions
-                from .decisions import check_decision
-                for decision in self.decisions.values():
-                    violation = check_decision(decision, {
-                        'type': 'newtype',
-                        'name': name,
-                        'base': base,
-                    })
-                    if violation:
+                for dec in self.decisions.values():
+                    want = dec.newtypes.get(name)
+                    if want and want != base:
                         self.diag(
                             "DEC001",
-                            violation.message,
+                            f"violates decision '{dec.id}': {dec.text.get('decision', '')}",
                             mod,
                             stmt.lineno,
-                            fix={"kind": "decision_violation", "decision": decision.id, "suggestion": violation.suggestion},
+                            context={"decision": dec.id, "rationale": dec.text.get("rationale", "")},
+                            fix={"kind": "replace_token", "from": f"{name}({base})", "to": f"{name}({want})", "confidence": "high"},
                         )
             elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
                 claim(stmt.target.id, stmt)
@@ -513,9 +514,7 @@ class Project:
                     fix, cands = replace_fix(n, std.STD[m])
                     self.diag("R003", f"'{m}' has no export '{n}'", mod, line, context={"exports": sorted(std.STD[m]), "candidates": cands}, fix=fix)
             elif m.startswith("lib.") and m[4:] in self.manifests:
-                # Check library manifest
-                manifest = self.manifests[m[4:]]
-                exports = set(manifest.types.keys()) | set(manifest.functions.keys()) | set(manifest.constants.keys())
+                exports = self.manifests[m[4:]].exports
                 if n not in exports:
                     fix, cands = replace_fix(n, exports)
                     self.diag("R003", f"'{m}' has no export '{n}'", mod, line, context={"exports": sorted(exports), "candidates": cands}, fix=fix)
@@ -534,9 +533,7 @@ class Project:
                     fix, cands = replace_fix(n, target.declared_names())
                     self.diag("R003", f"module '{m}' has no declaration '{n}'", mod, line, context={"declarations": sorted(target.declared_names()), "candidates": cands}, fix=fix)
             else:
-                # Include lib.* manifests in candidates
-                manifest_mods = [f"lib.{name}" for name in self.manifests.keys()]
-                fix, cands = replace_fix(m, list(std.STD) + list(self.modules) + manifest_mods)
+                fix, cands = replace_fix(m, [*std.STD, *self.modules, *(f"lib.{k}" for k in self.manifests)])
                 self.diag("R003", f"unknown module '{m}'", mod, line, context={"candidates": cands}, fix=fix)
 
         for name in list(mod.records) + list(mod.enums) + list(mod.newtypes):
@@ -887,6 +884,9 @@ class BodyChecker(ast.NodeVisitor):
                     self.err("T006", f"'{name}' takes exactly one positional value", node)
                 elif r and r[0] == "function":
                     self._check_call(node, r[1].functions[r[2]])
+                elif r and r[0] == "lib":
+                    for eff in sorted(r[1].functions.get(r[2], ())):
+                        self.use(eff, node, via=name)
         self.generic_visit(node)
 
     def _check_record_ctor(self, node: ast.Call, owner: ModuleInfo, rec: str) -> None:

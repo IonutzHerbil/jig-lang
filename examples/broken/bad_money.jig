@@ -1,4 +1,4 @@
-module shop.bad_money
+module broken.bad_money
 
 type Money = Money(float)
 

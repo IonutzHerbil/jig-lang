@@ -17,11 +17,6 @@
     "manifests",
     "python"
   ],
-  "icon": "icons/jig-icon.png",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/yourusername/jig-lang"
-  },
   "contributes": {
     "languages": [
       {
@@ -47,7 +42,7 @@
         "extensions": [
           ".manifest"
         ],
-        "configuration": "./manifest-configuration.json"
+        "configuration": "./language-configuration.json"
       },
       {
         "id": "jig-decision",
@@ -57,7 +52,7 @@
         "extensions": [
           ".decision"
         ],
-        "configuration": "./decision-configuration.json"
+        "configuration": "./language-configuration.json"
       },
       {
         "id": "jig-pattern",
@@ -67,7 +62,7 @@
         "extensions": [
           ".pattern"
         ],
-        "configuration": "./pattern-configuration.json"
+        "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [

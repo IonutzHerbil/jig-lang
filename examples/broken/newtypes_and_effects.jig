@@ -1,0 +1,39 @@
+module broken.newtypes_and_effects
+
+from std.ctx import Ctx, fixed_ctx
+
+type Money = Money(int)
+type Points = Points(int)
+type Tags = Tags(list)
+
+
+def mix_types(m: Money, p: Points) -> Money:
+    """Add points to money."""
+    effects: none
+    examples:
+        mix_types(Money(100), Points(50)) -> Money(150)
+    return Money(m + p)
+
+
+def add_raw_int(m: Money) -> Money:
+    """Add ten to an amount."""
+    effects: none
+    examples:
+        add_raw_int(Money(100)) -> Money(110)
+    return m + 10
+
+
+def read_clock(ctx: Ctx) -> int:
+    """Return the current time."""
+    effects: none
+    examples:
+        read_clock(fixed_ctx(t=1000)) -> 1000
+    return ctx.clock.now()
+
+
+def answer() -> int:
+    """Return a constant."""
+    effects: time
+    examples:
+        answer() -> 42
+    return 42
