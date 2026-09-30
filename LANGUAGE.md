@@ -36,7 +36,8 @@ type UserId = UserId(str)
 A distinct type over a primitive. Mixing `Money` with `UserId`, or with a plain number,
 is rejected by the checker (T002) and at runtime. Newtypes support `+`, `-` and
 comparisons with the same newtype; `int`/`float` newtypes can also be scaled by a
-plain `int` (`*`, `//`) and negated.
+plain `int` (`*`, `//`) and negated. A newtype has its base type's methods and nothing
+else; unwrap it with the base type: `int(amount)`, not `amount.value` (R002).
 
 ### Records
 
@@ -188,8 +189,14 @@ declare charge(amount: Amount, customer: CustomerId) -> Result[ChargeId, StripeE
 ```
 
 The complete list of what `lib.stripe` exports. Importing anything else is R003, and
-calling `charge` uses the `net` effect. There is no runtime binding yet, so examples
-that call `lib.*` functions cannot run.
+calling `charge` uses the `net` effect. The build turns the manifest's types into Python
+and takes function bodies from plain Python files next to it:
+
+- `lib/stripe.fake.py`: deterministic stand-ins, used whenever examples run
+- `lib/stripe.py`: the real adapter, used by `jig build` and `jig run`
+
+Both see the manifest's types and `Ok`/`Err`/`Some`/`Nothing` without importing them.
+A declared function missing from the file raises `NotImplementedError` when called.
 
 ### `.decisions/<id>.decision`: architectural decisions
 

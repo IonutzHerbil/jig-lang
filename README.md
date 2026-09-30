@@ -76,8 +76,7 @@ Full reference: [LANGUAGE.md](LANGUAGE.md). Every code: [ERROR_CODES.md](ERROR_C
 
 ## Not yet implemented
 
-A runtime for `lib.*` manifests (examples that call them cannot run yet), checking
-argument types of `lib.*` calls, enforcing `.pattern` files, `@endpoint`/`@store`/`@job`,
+Checking argument types of `lib.*` calls, enforcing `.pattern` files, `@endpoint`/`@store`/`@job`,
 flow-sensitive type inference, the generation cache, constrained decoding, `jig serve` (MCP),
 `jig spec`, and the Sentry integration.
 Attribute checks apply when the checker knows the value's type (parameters, records, constants,

@@ -12,6 +12,7 @@
 
 Jig code imports it as `from lib.stripe import charge`. Importing a name the
 manifest does not declare is R003; calling a declared function uses its effects.
+Function bodies come from `lib/<name>.fake.py` (examples) or `lib/<name>.py` (real).
 """
 
 from __future__ import annotations
@@ -23,26 +24,30 @@ from pathlib import Path
 from . import std
 from .diagnostics import Diagnostic
 
-TYPE_RE = re.compile(r"type\s+(\w+)\s*=\s*\1\(\s*\w+\s*\)")
-BLOCK_RE = re.compile(r"(?:enum|record)\s+(\w+)\s*:")
+TYPE_RE = re.compile(r"type\s+(\w+)\s*=\s*\1\(\s*(\w+)\s*\)")
+BLOCK_RE = re.compile(r"(enum|record)\s+(\w+)\s*:")
 DECLARE_RE = re.compile(r"declare\s+(\w+)\s*\(.*\)\s*(?:->.+)?")
+FIELD_RE = re.compile(r"(\w+)\s*:\s*(.+)")
 
 
 @dataclass
 class Manifest:
     name: str
-    types: set[str] = field(default_factory=set)
+    dir: Path
+    newtypes: dict[str, str] = field(default_factory=dict)
+    enums: dict[str, list[str]] = field(default_factory=dict)
+    records: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     functions: dict[str, set[str]] = field(default_factory=dict)
 
     @property
     def exports(self) -> set[str]:
-        return self.types | set(self.functions)
+        return set(self.newtypes) | set(self.enums) | set(self.records) | set(self.functions)
 
 
 def parse_manifest(path: Path) -> tuple[Manifest | None, list[Diagnostic]]:
     diags: list[Diagnostic] = []
     manifest: Manifest | None = None
-    current: str | None = None
+    block: tuple[str, str] | None = None
 
     def err(code: str, msg: str, line: int) -> None:
         diags.append(Diagnostic(code, msg, str(path), line))
@@ -55,22 +60,33 @@ def parse_manifest(path: Path) -> tuple[Manifest | None, list[Diagnostic]]:
             if not line.startswith("lib "):
                 err("M001", "a manifest must start with 'lib <name>'", lineno)
                 return None, diags
-            manifest = Manifest(name=line[4:].strip())
+            manifest = Manifest(name=line[4:].strip(), dir=path.parent)
         elif raw[0].isspace():
-            if current and line.startswith("effects:"):
+            kind, name = block or ("", "")
+            if kind == "enum":
+                manifest.enums[name].append(line)
+            elif kind == "record" and (m := FIELD_RE.fullmatch(line)):
+                manifest.records[name].append((m.group(1), m.group(2)))
+            elif kind == "declare" and line.startswith("effects:"):
                 for eff in (e.strip() for e in line[8:].split(",")):
                     if eff in std.EFFECTS:
-                        manifest.functions[current].add(eff)
+                        manifest.functions[name].add(eff)
                     elif eff != "none":
                         err("M003", f"unknown effect '{eff}'", lineno)
-        elif m := TYPE_RE.fullmatch(line) or BLOCK_RE.fullmatch(line):
-            current = None
-            manifest.types.add(m.group(1))
+        elif m := TYPE_RE.fullmatch(line):
+            block = None
+            manifest.newtypes[m.group(1)] = m.group(2)
+        elif m := BLOCK_RE.fullmatch(line):
+            block = (m.group(1), m.group(2))
+            if m.group(1) == "enum":
+                manifest.enums[m.group(2)] = []
+            else:
+                manifest.records[m.group(2)] = []
         elif m := DECLARE_RE.fullmatch(line):
-            current = m.group(1)
-            manifest.functions[current] = set()
+            block = ("declare", m.group(1))
+            manifest.functions[m.group(1)] = set()
         else:
-            current = None
+            block = None
             err("M002", "expected 'type', 'enum', 'record', or 'declare'", lineno)
     if manifest is None:
         err("M001", "a manifest must start with 'lib <name>'", 1)

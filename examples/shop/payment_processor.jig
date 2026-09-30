@@ -13,4 +13,4 @@ def process_payment(ctx: Ctx, email: str, amount: Money) -> Result[ChargeId, Str
         process_payment(fixed_ctx(), "test@example.com", Money(100)) -> Ok(ChargeId("ch_100"))
         process_payment(fixed_ctx(), "invalid@example.com", Money(100)) -> Err(StripeError.INVALID_CUSTOMER)
     customer_result = create_customer(email)?
-    return charge(Amount(amount.value), customer_result, "usd")
+    return charge(Amount(int(amount)), customer_result, "usd")

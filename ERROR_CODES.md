@@ -21,7 +21,7 @@ most also carry a `fix` an agent can apply directly.
 | Code | Meaning |
 | --- | --- |
 | R001 | Unknown name (fix suggests the import or nearest name) |
-| R002 | Unknown record field, enum variant, `Ctx` capability or method, or keyword parameter |
+| R002 | Unknown record field, enum variant, newtype attribute, `Ctx` capability or method, or keyword parameter |
 | R003 | Unknown module, or a name the module / `std` / `lib.*` manifest does not export |
 
 ## Types

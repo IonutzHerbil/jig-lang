@@ -37,7 +37,7 @@ def check_project(paths: list[str], run_ex: bool = True) -> tuple[Project, dict[
     total = passed = 0
     if run_ex and not project.has_errors:
         with tempfile.TemporaryDirectory() as tmp:
-            build(project, Path(tmp))
+            build(project, Path(tmp), fakes=True)
             total, passed, diags = run_examples(project, Path(tmp))
             project.diags.extend(diags)
     diags = project.sorted_diags()

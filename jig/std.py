@@ -43,7 +43,8 @@ MUTABLE_CALLS = frozenset({"list", "dict", "set"})
 # Names the preprocessor introduces. Never written by users.
 INTERNAL: frozenset[str] = frozenset({"__jig_try__", "__jig_newtype__"})
 
-PRIMITIVES = frozenset({"int", "float", "str", "bytes", "bool"})
+PRIMITIVE_TYPES: dict[str, type] = {"int": int, "float": float, "str": str, "bytes": bytes, "bool": bool}
+PRIMITIVES = frozenset(PRIMITIVE_TYPES)
 
 
 def covers(declared: str, used: str) -> bool:

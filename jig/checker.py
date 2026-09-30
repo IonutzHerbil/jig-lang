@@ -850,6 +850,17 @@ class BodyChecker(ast.NodeVisitor):
                     self.err("R002", f"ctx.{part} has no method '{node.attr}'", node, context={"known": sorted(std.CTX_METHODS[part])}, fix=fix)
                 else:
                     self.use(std.CTX_PARTS[part], node)
+            elif kind == "newtype" and base[1].newtypes[base[2]] in std.PRIMITIVE_TYPES:
+                nt = base[2]
+                prim = base[1].newtypes[nt]
+                if node.attr.startswith("_") or not hasattr(std.PRIMITIVE_TYPES[prim], node.attr):
+                    self.err(
+                        "R002",
+                        f"newtype '{nt}' has no attribute '{node.attr}'; use {prim}(x) for the underlying value",
+                        node,
+                        context={"newtype": nt, "base": prim},
+                        fix={"kind": "replace_token", "from": f"{ast.unparse(node.value)}.{node.attr}", "to": f"{prim}({ast.unparse(node.value)})", "confidence": "medium"},
+                    )
             elif kind == "enum_type":
                 owner, en = base[1], base[2]
                 variants = owner.enums[en]
