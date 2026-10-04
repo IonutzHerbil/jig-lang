@@ -1,0 +1,11 @@
+{
+  "domain": "project: pricing",
+  "project": "store",
+  "module": "store.loyalty",
+  "entry": "loyalty_points",
+  "request": "Add loyalty points: a customer earns one point per full 100 cents of their order total; PLATINUM customers earn double. Order problems fail with the same StoreError as the order total does.",
+  "signature": {
+    "python": "def loyalty_points(customer: Customer, lines: list[Line]) -> int  # on failure: raise StoreFailure(StoreError.<reason>)",
+    "jig": "def loyalty_points(customer: Customer, lines: list[Line]) -> Result[int, StoreError]"
+  }
+}

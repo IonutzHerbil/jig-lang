@@ -117,6 +117,18 @@ def _is_docstring(stmt: ast.stmt) -> bool:
     return isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str)
 
 
+def _eq_subject(test: ast.expr) -> str | None:
+    """'x' for a test like `x == "a"` or `x == Color.RED`, else None."""
+    if (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Eq)
+        and isinstance(test.comparators[0], (ast.Constant, ast.Attribute))
+    ):
+        return ast.unparse(test.left)
+    return None
+
+
 def _bound_names(stmts: list[ast.stmt]) -> set[str]:
     names: set[str] = set()
     for node in ast.walk(ast.Module(body=stmts, type_ignores=[])):
@@ -749,14 +761,16 @@ class BodyChecker(ast.NodeVisitor):
 
     def visit_If(self, node: ast.If) -> None:
         if id(node) not in self._chain_seen:
-            count, cur = 1, node
+            count, cur, subjects = 1, node, {_eq_subject(node.test)}
             while len(cur.orelse) == 1 and isinstance(cur.orelse[0], ast.If):
                 cur = cur.orelse[0]
                 self._chain_seen.add(id(cur))
+                subjects.add(_eq_subject(cur.test))
                 count += 1
             if cur.orelse:
                 count += 1
-            if count >= 3:
+            # Only a chain comparing one subject to constants is a match in disguise.
+            if count >= 3 and len(subjects) == 1 and None not in subjects:
                 self.err("D003", f"if/elif chain with {count} branches; use 'match'", node)
         self.generic_visit(node)
 

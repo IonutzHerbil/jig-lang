@@ -1,0 +1,13 @@
+[
+{"args": [["open a", "deposit a 100", "withdraw a 30"]], "expect": {"a": 70}},
+{"args": [["open a", "open b", "deposit a 50", "transfer a b 20"]], "expect": {"a": 30, "b": 20}},
+{"args": [["open a", "withdraw a 1"]], "expect": "error"},
+{"args": [["deposit a 5"]], "expect": "error"},
+{"args": [["open a", "open a"]], "expect": "error"},
+{"args": [["open a", "deposit a -5"]], "expect": "error"},
+{"args": [["open a", "deposit a 0"]], "expect": "error"},
+{"args": [["open a", "deposit a"]], "expect": "error"},
+{"args": [[]], "expect": {}},
+{"args": [["open a", "bogus a"]], "expect": "error"},
+{"args": [["open a", "open b", "transfer a b 1"]], "expect": "error"}
+]

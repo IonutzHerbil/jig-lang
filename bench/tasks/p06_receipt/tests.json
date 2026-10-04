@@ -1,0 +1,8 @@
+[
+{"args": ["ANNA", "[L('bread', 2)]"], "expect": ["Bread x2 7.00", "TOTAL 7.98"]},
+{"args": ["ERIN", "[L('apple', 3), L('cheese', 1)]"], "expect": ["Apple x3 3.60", "Cheese x1 12.99", "TOTAL 17.75"]},
+{"args": ["EVE", "[L('apple', 1)]"], "expect": ["Apple x1 1.20", "TOTAL 1.44"]},
+{"args": ["ANNA", "[L('wine', 1)]"], "expect": "error:OUT_OF_STOCK"},
+{"args": ["ANNA", "[]"], "expect": "error:EMPTY_CART"},
+{"args": ["SAM", "[L('apple', 50)]"], "expect": ["Apple x50 60.00", "TOTAL 72.00"]}
+]

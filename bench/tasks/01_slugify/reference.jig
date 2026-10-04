@@ -1,0 +1,20 @@
+module solution
+
+
+def slugify(text: str) -> str:
+    """Lowercase text and join its runs of a-z/0-9 with single dashes."""
+    effects: none
+    examples:
+        slugify("Hello, World!") -> "hello-world"
+        slugify("  --  ") -> ""
+    parts: list[str] = []
+    current = ""
+    for ch in text.lower():
+        if ("a" <= ch and ch <= "z") or ("0" <= ch and ch <= "9"):
+            current = current + ch
+        elif current != "":
+            parts.append(current)
+            current = ""
+    if current != "":
+        parts.append(current)
+    return "-".join(parts)

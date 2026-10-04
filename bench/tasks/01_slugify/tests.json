@@ -1,0 +1,9 @@
+[
+{"args": ["Hello, World!"], "expect": "hello-world"},
+{"args": ["  Jig  is   COOL "], "expect": "jig-is-cool"},
+{"args": ["a--b"], "expect": "a-b"},
+{"args": ["---"], "expect": ""},
+{"args": ["Version 2.0 Released"], "expect": "version-2-0-released"},
+{"args": ["\u00dcn\u00efcode ok"], "expect": "n-code-ok"},
+{"args": [""], "expect": ""}
+]

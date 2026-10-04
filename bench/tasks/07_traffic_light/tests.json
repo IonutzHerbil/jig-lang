@@ -1,0 +1,10 @@
+[
+{"args": [[]], "expect": "red"},
+{"args": [["timer"]], "expect": "green"},
+{"args": [["timer", "timer", "timer"]], "expect": "red"},
+{"args": [["timer", "emergency", "timer"]], "expect": "flashing"},
+{"args": [["emergency", "reset", "timer"]], "expect": "green"},
+{"args": [["reset"]], "expect": "red"},
+{"args": [["timer", "honk"]], "expect": "error"},
+{"args": [["timer", "timer", "reset"]], "expect": "yellow"}
+]

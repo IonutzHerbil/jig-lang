@@ -1,0 +1,12 @@
+[
+{"args": [1000, "SAVE10", 1], "expect": 900},
+{"args": [999, "SAVE10", 100], "expect": 900},
+{"args": [1000, "SAVE10", 101], "expect": "error"},
+{"args": [300, "FIXED500", 5], "expect": 0},
+{"args": [2000, "HALF", 0], "expect": 1000},
+{"args": [1999, "HALF", 0], "expect": "error"},
+{"args": [2001, "HALF", 0], "expect": 1001},
+{"args": [100, "BOGUS", 0], "expect": "error"},
+{"args": [-5, "FIXED500", 0], "expect": "error"},
+{"args": [1000, "save10", 1], "expect": "error"}
+]

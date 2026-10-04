@@ -1,0 +1,11 @@
+{
+  "domain": "project: payments",
+  "project": "store",
+  "module": "store.checkout",
+  "entry": "checkout",
+  "request": "Add checkout: charge the customer for their order total through the payments library, using the customer's id as the payments customer. Return the id of the new charge. Problems with the order itself (empty cart, unknown product, bad quantity, out of stock) fail with the same StoreError as the order total does; any payment failure fails with PAYMENT_DECLINED.",
+  "signature": {
+    "python": "def checkout(customer: Customer, lines: list[Line]) -> ChargeId  # on failure: raise StoreFailure(StoreError.<reason>)",
+    "jig": "def checkout(customer: Customer, lines: list[Line]) -> Result[ChargeId, StoreError]"
+  }
+}

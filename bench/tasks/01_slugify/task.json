@@ -1,0 +1,9 @@
+{
+  "domain": "strings",
+  "entry": "slugify",
+  "request": "Turn a title into a URL slug: lowercase it, replace every run of characters that are not a-z or 0-9 with a single '-', and remove '-' from both ends.",
+  "signature": {
+    "python": "def slugify(text: str) -> str",
+    "jig": "def slugify(text: str) -> str"
+  }
+}

@@ -1,0 +1,19 @@
+module store.billing
+
+from std.result import Err, Ok, Result
+from store.orders import ANNA, order_total
+from store.types import Customer, Line, Money, Sku, StoreError
+
+
+def split_bill(customer: Customer, lines: list[Line], people: int) -> Result[list[Money], StoreError]:
+    """Split the order total into whole-cent shares, extra cents going to the first shares."""
+    effects: none
+    examples:
+        split_bill(ANNA, [Line(sku=Sku("bread"), quantity=2)], 4) -> Ok([Money(200), Money(200), Money(199), Money(199)])
+        split_bill(ANNA, [Line(sku=Sku("bread"), quantity=2)], 0) -> Err(StoreError.INVALID_QUANTITY)
+    if people < 1:
+        return Err(StoreError.INVALID_QUANTITY)
+    cents = int(order_total(customer, lines)?)
+    share = cents // people
+    extra = cents % people
+    return Ok([Money(share + 1) if i < extra else Money(share) for i in range(people)])

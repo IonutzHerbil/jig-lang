@@ -1,0 +1,8 @@
+[
+{"args": ["5"], "expect": ["cheese", "wine"]},
+{"args": ["1"], "expect": ["wine"]},
+{"args": ["0"], "expect": []},
+{"args": ["100"], "expect": ["apple", "bread", "cheese", "wine"]},
+{"args": ["11"], "expect": ["bread", "cheese", "wine"]},
+{"args": ["10"], "expect": ["cheese", "wine"]}
+]

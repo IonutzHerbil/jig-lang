@@ -1,0 +1,10 @@
+[
+{"args": [["a-b:1", "b-c:2", "a-c:5"], "a", "c"], "expect": 3},
+{"args": [["a-b:1"], "a", "a"], "expect": 0},
+{"args": [["a-b:1", "c-d:1"], "a", "d"], "expect": "error"},
+{"args": [[], "a", "b"], "expect": "error"},
+{"args": [["a-b:4", "b-c:1", "a-c:1", "c-d:1", "b-d:5"], "a", "d"], "expect": 2},
+{"args": [["x-y:2"], "y", "x"], "expect": 2},
+{"args": [["a-b"], "a", "b"], "expect": "error"},
+{"args": [["a-b:x"], "a", "b"], "expect": "error"}
+]

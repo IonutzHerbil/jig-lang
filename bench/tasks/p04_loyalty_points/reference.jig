@@ -1,0 +1,15 @@
+module store.loyalty
+
+from std.result import Err, Ok, Result
+from store.orders import ANNA, order_total
+from store.types import Customer, Line, Sku, StoreError, Tier
+
+
+def loyalty_points(customer: Customer, lines: list[Line]) -> Result[int, StoreError]:
+    """One point per full 100 cents of the order total, doubled for PLATINUM."""
+    effects: none
+    examples:
+        loyalty_points(ANNA, [Line(sku=Sku("bread"), quantity=2)]) -> Ok(7)
+        loyalty_points(ANNA, []) -> Err(StoreError.EMPTY_CART)
+    points = int(order_total(customer, lines)?) // 100
+    return Ok(points * 2 if customer.tier == Tier.PLATINUM else points)

@@ -1,0 +1,9 @@
+{
+  "domain": "state machine",
+  "entry": "traffic_light",
+  "request": "Simulate a traffic light that starts red, given a list of events. 'timer' moves red to green, green to yellow and yellow to red, and does nothing while flashing. 'emergency' switches to flashing from any state. 'reset' switches flashing back to red and does nothing otherwise. Return the final state name ('red', 'green', 'yellow' or 'flashing'). Any other event is invalid.",
+  "signature": {
+    "python": "def traffic_light(events: list[str]) -> str",
+    "jig": "def traffic_light(events: list[str]) -> Result[str, str]"
+  }
+}

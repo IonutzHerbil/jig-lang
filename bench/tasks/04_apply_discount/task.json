@@ -1,0 +1,9 @@
+{
+  "domain": "business",
+  "entry": "apply_discount",
+  "request": "Apply a discount code to a cart total in cents on a given day number. Codes are case-sensitive: SAVE10 takes 10% off (the discount is rounded down to whole cents) and is valid up to and including day 100; FIXED500 takes 500 cents off and never expires; HALF takes 50% off (discount rounded down) and needs a cart of at least 2000 cents. The result never goes below 0. An unknown code, an expired code, HALF on a smaller cart, or a negative total is invalid.",
+  "signature": {
+    "python": "def apply_discount(total_cents: int, code: str, day: int) -> int",
+    "jig": "def apply_discount(total_cents: int, code: str, day: int) -> Result[int, str]"
+  }
+}

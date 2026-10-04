@@ -1,0 +1,41 @@
+module solution
+
+from std.result import Err, Ok, Result
+
+
+def parse_edge(text: str) -> Result[tuple[str, str, int], str]:
+    """Split 'a-b:3' into its two nodes and weight."""
+    effects: none
+    examples:
+        parse_edge("a-b:3") -> Ok(("a", "b", 3))
+        parse_edge("a-b") -> Err
+        parse_edge("a-b:x") -> Err
+    halves = text.split(":")
+    if len(halves) != 2 or not halves[1].isdigit():
+        return Err(f"bad edge: {text}")
+    ends = halves[0].split("-")
+    if len(ends) != 2 or ends[0] == "" or ends[1] == "":
+        return Err(f"bad edge: {text}")
+    return Ok((ends[0], ends[1], int(halves[1])))
+
+
+def shortest_path(edges: list[str], start: str, goal: str) -> Result[int, str]:
+    """Shortest total weight from start to goal (Bellman-Ford over undirected edges)."""
+    effects: none
+    examples:
+        shortest_path(["a-b:1", "b-c:2", "a-c:5"], "a", "c") -> Ok(3)
+        shortest_path(["a-b:1"], "a", "a") -> Ok(0)
+        shortest_path(["a-b:1", "c-d:1"], "a", "d") -> Err
+    parsed: list[tuple[str, str, int]] = []
+    for text in edges:
+        parsed.append(parse_edge(text)?)
+    dist: dict[str, int] = {start: 0}
+    for _ in range(len(parsed) + 1):
+        for a, b, w in parsed:
+            if a in dist and (b not in dist or dist[a] + w < dist[b]):
+                dist[b] = dist[a] + w
+            if b in dist and (a not in dist or dist[b] + w < dist[a]):
+                dist[a] = dist[b] + w
+    if goal not in dist:
+        return Err(f"{goal} is unreachable from {start}")
+    return Ok(dist[goal])

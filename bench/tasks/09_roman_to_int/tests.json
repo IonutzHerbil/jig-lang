@@ -1,0 +1,11 @@
+[
+{"args": ["III"], "expect": 3},
+{"args": ["IV"], "expect": 4},
+{"args": ["IX"], "expect": 9},
+{"args": ["LVIII"], "expect": 58},
+{"args": ["MCMXCIV"], "expect": 1994},
+{"args": ["MMXXVI"], "expect": 2026},
+{"args": [""], "expect": "error"},
+{"args": ["ABC"], "expect": "error"},
+{"args": ["iv"], "expect": "error"}
+]

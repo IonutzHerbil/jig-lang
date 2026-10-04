@@ -17,3 +17,4 @@ env/
 .venv/
 build_*/
 *.vsix
+bench/results/

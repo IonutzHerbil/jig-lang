@@ -1,0 +1,42 @@
+module store.pricing
+
+from store.types import Money, Region, Tier
+
+
+def percent_of(amount: Money, percent: int) -> Money:
+    """percent% of amount, rounded down to whole cents."""
+    effects: none
+    examples:
+        percent_of(Money(999), 10) -> Money(99)
+        percent_of(Money(1000), 0) -> Money(0)
+    return Money(int(amount) * percent // 100)
+
+
+def tier_discount(tier: Tier) -> int:
+    """Discount percent for a loyalty tier."""
+    effects: none
+    examples:
+        tier_discount(Tier.STANDARD) -> 0
+        tier_discount(Tier.PLATINUM) -> 10
+    match tier:
+        case Tier.STANDARD:
+            return 0
+        case Tier.GOLD:
+            return 5
+        case Tier.PLATINUM:
+            return 10
+
+
+def tax_rate(region: Region) -> int:
+    """Sales tax percent for a region."""
+    effects: none
+    examples:
+        tax_rate(Region.EU) -> 20
+        tax_rate(Region.US) -> 7
+    match region:
+        case Region.EU:
+            return 20
+        case Region.UK:
+            return 20
+        case Region.US:
+            return 7

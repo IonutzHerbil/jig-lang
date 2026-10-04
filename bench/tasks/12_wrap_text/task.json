@@ -1,0 +1,9 @@
+{
+  "domain": "strings",
+  "entry": "wrap_text",
+  "request": "Greedy word wrap: split the text on whitespace into words and fill lines left to right, joining words with one space and never exceeding `width` characters per line. A word longer than `width` goes on its own line unbroken. Return the list of lines. A width below 1 is invalid.",
+  "signature": {
+    "python": "def wrap_text(text: str, width: int) -> list[str]",
+    "jig": "def wrap_text(text: str, width: int) -> Result[list[str], str]"
+  }
+}

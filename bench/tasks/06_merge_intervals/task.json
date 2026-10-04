@@ -1,0 +1,9 @@
+{
+  "domain": "algorithms",
+  "entry": "merge_intervals",
+  "request": "Given closed integer intervals [start, end], merge every pair that overlaps or shares an endpoint and return the result sorted by start. An interval with start greater than end is invalid.",
+  "signature": {
+    "python": "def merge_intervals(intervals: list[list[int]]) -> list[list[int]]",
+    "jig": "def merge_intervals(intervals: list[list[int]]) -> Result[list[list[int]], str]"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "domain": "business",
+  "entry": "bank_ledger",
+  "request": "Process bank ledger operations in order and return the final balance of every opened account. Each operation is one of 'open <name>', 'deposit <name> <amount>', 'withdraw <name> <amount>' or 'transfer <from> <to> <amount>', with words separated by single spaces. Amounts are positive integers. Using an account before it is opened, opening an account twice, withdrawing or transferring more than the balance, a non-positive or non-integer amount, or a malformed operation is invalid.",
+  "signature": {
+    "python": "def bank_ledger(ops: list[str]) -> dict[str, int]",
+    "jig": "def bank_ledger(ops: list[str]) -> Result[dict[str, int], str]"
+  }
+}

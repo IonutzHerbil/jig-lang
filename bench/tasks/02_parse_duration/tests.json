@@ -1,0 +1,14 @@
+[
+{"args": ["1h30m"], "expect": 5400},
+{"args": ["45s"], "expect": 45},
+{"args": ["2h5s"], "expect": 7205},
+{"args": ["0m"], "expect": 0},
+{"args": ["1h1m1s"], "expect": 3661},
+{"args": [""], "expect": "error"},
+{"args": ["5"], "expect": "error"},
+{"args": ["1m1h"], "expect": "error"},
+{"args": ["1h1h"], "expect": "error"},
+{"args": ["h"], "expect": "error"},
+{"args": ["1d"], "expect": "error"},
+{"args": ["10m 5s"], "expect": "error"}
+]

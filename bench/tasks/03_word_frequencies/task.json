@@ -1,0 +1,9 @@
+{
+  "domain": "data",
+  "entry": "word_frequencies",
+  "request": "Count the words in a text, case-insensitively. A word is a maximal run of letters a-z after lowercasing. Return the `top` most frequent words as (word, count) pairs, sorted by count descending, ties broken alphabetically. `top` is never negative.",
+  "signature": {
+    "python": "def word_frequencies(text: str, top: int) -> list[tuple[str, int]]",
+    "jig": "def word_frequencies(text: str, top: int) -> list[tuple[str, int]]"
+  }
+}

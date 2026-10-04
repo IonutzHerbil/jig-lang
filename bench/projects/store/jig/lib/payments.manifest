@@ -1,0 +1,18 @@
+lib payments
+
+type ChargeId = ChargeId(str)
+type Cents = Cents(int)
+
+enum PaymentError:
+    CARD_DECLINED
+    INSUFFICIENT_FUNDS
+    UNKNOWN_CHARGE
+    REFUND_EXCEEDS_CHARGE
+
+declare charge(customer: str, amount: Cents) -> Result[ChargeId, PaymentError]
+    effects: net
+    doc: "Charge a customer's saved card; returns the new charge's id"
+
+declare refund(charge: ChargeId, amount: Cents) -> Result[Cents, PaymentError]
+    effects: net
+    doc: "Refund part or all of a charge; returns the amount refunded"

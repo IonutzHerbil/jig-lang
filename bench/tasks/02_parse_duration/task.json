@@ -1,0 +1,9 @@
+{
+  "domain": "parsing",
+  "entry": "parse_duration",
+  "request": "Parse a duration such as '1h30m', '45s' or '2h5s' into a number of seconds. The units are h, m and s; each may appear at most once, in that order, and each is preceded by a non-negative integer. An empty string, a number without a unit, unknown units, spaces, or units out of order are invalid.",
+  "signature": {
+    "python": "def parse_duration(text: str) -> int",
+    "jig": "def parse_duration(text: str) -> Result[int, str]"
+  }
+}

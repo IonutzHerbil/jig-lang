@@ -1,0 +1,9 @@
+decision money
+
+context: Prices, totals, discounts, tax and refunds all handle money
+decision: Money is an int number of cents, never float; percentages round down to whole cents via store.pricing.percent_of
+rationale: Float arithmetic is inexact, and one rounding rule keeps every total reproducible
+enforcement: Money is Money(int); the payments library takes Cents, converted with Cents(int(money))
+examples:
+    ✓ type Money = Money(int)
+    ✗ type Money = Money(float)

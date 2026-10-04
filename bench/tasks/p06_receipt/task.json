@@ -1,0 +1,11 @@
+{
+  "domain": "project: formatting",
+  "project": "store",
+  "module": "store.receipts",
+  "entry": "receipt",
+  "request": "Add receipts: one text line per cart line, '<product name> x<quantity> <line total>', followed by 'TOTAL <order total>'. Amounts are written in euros with two decimals, e.g. 1299 cents is '12.99' and 5 cents is '0.05'. Line totals are before discount and tax. Order problems fail with the same StoreError as the order total does.",
+  "signature": {
+    "python": "def receipt(customer: Customer, lines: list[Line]) -> list[str]  # on failure: raise StoreFailure(StoreError.<reason>)",
+    "jig": "def receipt(customer: Customer, lines: list[Line]) -> Result[list[str], StoreError]"
+  }
+}

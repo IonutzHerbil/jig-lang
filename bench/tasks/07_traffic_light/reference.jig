@@ -1,0 +1,45 @@
+module solution
+
+from std.result import Err, Ok, Result
+
+enum Light:
+    RED
+    GREEN
+    YELLOW
+    FLASHING
+
+
+def step(light: Light, event: str) -> Result[Light, str]:
+    """Apply one event to the light."""
+    effects: none
+    examples:
+        step(Light.RED, "timer") -> Ok(Light.GREEN)
+        step(Light.FLASHING, "reset") -> Ok(Light.RED)
+        step(Light.RED, "honk") -> Err
+    if event == "emergency":
+        return Ok(Light.FLASHING)
+    if event == "reset":
+        return Ok(Light.RED if light == Light.FLASHING else light)
+    if event != "timer":
+        return Err(f"unknown event: {event}")
+    match light:
+        case Light.RED:
+            return Ok(Light.GREEN)
+        case Light.GREEN:
+            return Ok(Light.YELLOW)
+        case Light.YELLOW:
+            return Ok(Light.RED)
+        case Light.FLASHING:
+            return Ok(Light.FLASHING)
+
+
+def traffic_light(events: list[str]) -> Result[str, str]:
+    """The final light, lowercased, after all events starting from red."""
+    effects: none
+    examples:
+        traffic_light(["timer", "timer"]) -> Ok("yellow")
+        traffic_light(["honk"]) -> Err
+    light = Light.RED
+    for event in events:
+        light = step(light, event)?
+    return Ok(light.name.lower())

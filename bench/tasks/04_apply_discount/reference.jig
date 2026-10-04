@@ -1,0 +1,29 @@
+module solution
+
+from std.result import Err, Ok, Result
+
+
+def apply_discount(total_cents: int, code: str, day: int) -> Result[int, str]:
+    """Apply SAVE10, FIXED500 or HALF to a cart total in cents, never going below zero."""
+    effects: none
+    examples:
+        apply_discount(1000, "SAVE10", 1) -> Ok(900)
+        apply_discount(1000, "SAVE10", 101) -> Err
+        apply_discount(300, "FIXED500", 5) -> Ok(0)
+    if total_cents < 0:
+        return Err("negative total")
+    discount = 0
+    match code:
+        case "SAVE10":
+            if day > 100:
+                return Err("SAVE10 expired")
+            discount = total_cents // 10
+        case "FIXED500":
+            discount = 500
+        case "HALF":
+            if total_cents < 2000:
+                return Err("HALF needs at least 2000 cents")
+            discount = total_cents // 2
+        case _:
+            return Err(f"unknown code: {code}")
+    return Ok(max(0, total_cents - discount))

@@ -1,0 +1,13 @@
+module store.inventory
+
+from store.catalog import CATALOG
+from store.types import Sku
+
+
+def low_stock(threshold: int) -> list[Sku]:
+    """SKUs whose stock is below threshold, in alphabetical order."""
+    effects: none
+    examples:
+        low_stock(5) -> [Sku("cheese"), Sku("wine")]
+        low_stock(0) -> []
+    return sorted([p.sku for p in CATALOG.values() if p.stock < threshold])

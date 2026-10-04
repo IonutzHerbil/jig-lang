@@ -1,0 +1,11 @@
+{
+  "domain": "project: pricing",
+  "project": "store",
+  "module": "store.shipping",
+  "entry": "shipping_cost",
+  "request": "Add shipping costs: shipping is free when the order total is at least 5000 cents; otherwise it costs 499 cents in the EU, 599 in the UK and 799 in the US. Order problems fail with the same StoreError as the order total does.",
+  "signature": {
+    "python": "def shipping_cost(customer: Customer, lines: list[Line]) -> Money  # on failure: raise StoreFailure(StoreError.<reason>)",
+    "jig": "def shipping_cost(customer: Customer, lines: list[Line]) -> Result[Money, StoreError]"
+  }
+}

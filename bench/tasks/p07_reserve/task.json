@@ -1,0 +1,11 @@
+{
+  "domain": "project: inventory",
+  "project": "store",
+  "module": "store.reservations",
+  "entry": "reserve",
+  "request": "Add stock reservation: check that the catalog can supply all the lines together (lines for the same SKU add up) and return the stock left for each SKU in the cart. Fail with EMPTY_CART for no lines, INVALID_QUANTITY for a quantity below 1, UNKNOWN_SKU for a product not in the catalog, and OUT_OF_STOCK when the combined quantity exceeds the stock.",
+  "signature": {
+    "python": "def reserve(lines: list[Line]) -> dict[Sku, int]  # on failure: raise StoreFailure(StoreError.<reason>)",
+    "jig": "def reserve(lines: list[Line]) -> Result[dict[Sku, int], StoreError]"
+  }
+}

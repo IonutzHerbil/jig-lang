@@ -1,0 +1,29 @@
+module store.reservations
+
+from std.result import Err, Ok, Result
+from store.catalog import find_product
+from store.types import Line, Sku, StoreError
+
+
+def reserve(lines: list[Line]) -> Result[dict[Sku, int], StoreError]:
+    """Stock left per SKU after reserving every line together."""
+    effects: none
+    examples:
+        reserve([Line(sku=Sku("apple"), quantity=10), Line(sku=Sku("apple"), quantity=5)]) -> Ok({Sku("apple"): 35})
+        reserve([Line(sku=Sku("cheese"), quantity=2), Line(sku=Sku("cheese"), quantity=2)]) -> Err(StoreError.OUT_OF_STOCK)
+        reserve([]) -> Err(StoreError.EMPTY_CART)
+    if len(lines) == 0:
+        return Err(StoreError.EMPTY_CART)
+    wanted: dict[Sku, int] = {}
+    for line in lines:
+        if line.quantity < 1:
+            return Err(StoreError.INVALID_QUANTITY)
+        find_product(line.sku)?
+        wanted[line.sku] = wanted.get(line.sku, 0) + line.quantity
+    left: dict[Sku, int] = {}
+    for sku, quantity in wanted.items():
+        product = find_product(sku)?
+        if quantity > product.stock:
+            return Err(StoreError.OUT_OF_STOCK)
+        left[sku] = product.stock - quantity
+    return Ok(left)

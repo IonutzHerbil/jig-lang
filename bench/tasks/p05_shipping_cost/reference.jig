@@ -1,0 +1,25 @@
+module store.shipping
+
+from std.result import Err, Ok, Result
+from store.orders import ANNA, order_total
+from store.types import Customer, Line, Money, Region, Sku, StoreError
+
+FREE_SHIPPING_FROM: Money = Money(5000)
+
+
+def shipping_cost(customer: Customer, lines: list[Line]) -> Result[Money, StoreError]:
+    """Free from 5000 cents, else a flat rate per region."""
+    effects: none
+    examples:
+        shipping_cost(ANNA, [Line(sku=Sku("bread"), quantity=2)]) -> Ok(Money(499))
+        shipping_cost(ANNA, []) -> Err(StoreError.EMPTY_CART)
+    total = order_total(customer, lines)?
+    if total >= FREE_SHIPPING_FROM:
+        return Ok(Money(0))
+    match customer.region:
+        case Region.EU:
+            return Ok(Money(499))
+        case Region.UK:
+            return Ok(Money(599))
+        case Region.US:
+            return Ok(Money(799))

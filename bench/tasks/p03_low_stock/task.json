@@ -1,0 +1,11 @@
+{
+  "domain": "project: inventory",
+  "project": "store",
+  "module": "store.inventory",
+  "entry": "low_stock",
+  "request": "Add a low-stock report: the SKUs of every catalog product whose stock is below the threshold, in alphabetical order.",
+  "signature": {
+    "python": "def low_stock(threshold: int) -> list[Sku]",
+    "jig": "def low_stock(threshold: int) -> list[Sku]"
+  }
+}

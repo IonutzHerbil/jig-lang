@@ -1,0 +1,11 @@
+{
+  "domain": "project: pricing",
+  "project": "store",
+  "module": "store.billing",
+  "entry": "split_bill",
+  "request": "Add bill splitting: split the order total between `people` as evenly as possible in whole cents, the first shares taking any extra cents, e.g. 798 cents between 4 people is 200, 200, 199, 199. Fewer than one person fails with INVALID_QUANTITY; order problems fail with the same StoreError as the order total does.",
+  "signature": {
+    "python": "def split_bill(customer: Customer, lines: list[Line], people: int) -> list[Money]  # on failure: raise StoreFailure(StoreError.<reason>)",
+    "jig": "def split_bill(customer: Customer, lines: list[Line], people: int) -> Result[list[Money], StoreError]"
+  }
+}

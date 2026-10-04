@@ -1,0 +1,34 @@
+module solution
+
+from std.result import Err, Ok, Result
+
+
+def parse_duration(text: str) -> Result[int, str]:
+    """Parse 'XhYmZs' (each unit optional, at most once, in this order) into seconds."""
+    effects: none
+    examples:
+        parse_duration("1h30m") -> Ok(5400)
+        parse_duration("1m1h") -> Err
+        parse_duration("") -> Err
+    if text == "":
+        return Err("empty duration")
+    units = "hms"
+    scale = {"h": 3600, "m": 60, "s": 1}
+    total = 0
+    digits = ""
+    next_unit = 0
+    for ch in text:
+        if "0" <= ch and ch <= "9":
+            digits = digits + ch
+        elif ch in scale:
+            pos = units.index(ch)
+            if digits == "" or pos < next_unit:
+                return Err(f"bad duration: {text}")
+            total = total + int(digits) * scale[ch]
+            digits = ""
+            next_unit = pos + 1
+        else:
+            return Err(f"unexpected character: {ch}")
+    if digits != "":
+        return Err("number without a unit")
+    return Ok(total)

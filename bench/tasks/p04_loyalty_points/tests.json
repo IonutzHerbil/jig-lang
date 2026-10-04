@@ -1,0 +1,9 @@
+[
+{"args": ["ANNA", "[L('bread', 2)]"], "expect": 7},
+{"args": ["PAUL", "[L('cheese', 3)]"], "expect": 74},
+{"args": ["SAM", "[L('apple', 1)]"], "expect": 1},
+{"args": ["SAM", "[L('apple', 50)]"], "expect": 72},
+{"args": ["ANNA", "[]"], "expect": "error:EMPTY_CART"},
+{"args": ["ERIN", "[L('apple', 0)]"], "expect": "error:INVALID_QUANTITY"},
+{"args": ["PAUL", "[L('apple', 1)]"], "expect": 2}
+]

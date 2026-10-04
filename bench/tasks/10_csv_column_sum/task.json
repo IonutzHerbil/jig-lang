@@ -1,0 +1,9 @@
+{
+  "domain": "data",
+  "entry": "csv_column_sum",
+  "request": "Sum one integer column of a simple CSV text: the first line is the header, fields are separated by commas with no quoting, and blank lines are ignored. Values may be negative. A missing column, a value that is not an integer, or a row with a different number of fields than the header is invalid.",
+  "signature": {
+    "python": "def csv_column_sum(csv: str, column: str) -> int",
+    "jig": "def csv_column_sum(csv: str, column: str) -> Result[int, str]"
+  }
+}

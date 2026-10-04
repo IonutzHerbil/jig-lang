@@ -80,7 +80,7 @@ most also carry a `fix` an agent can apply directly.
 | Code | Meaning |
 | --- | --- |
 | D001 | File is not in canonical form; run `jig fmt` |
-| D003 | if/elif chain with 3+ branches; use `match` |
+| D003 | if/elif chain of 3+ branches that compares one subject to constants; use `match` |
 
 ## Project files
 

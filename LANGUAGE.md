@@ -158,6 +158,11 @@ MAX_RETRY: int = 3
 
 `UPPER_CASE`, annotated, pure. Usable from functions and examples.
 
+## One way to write it
+
+An `if`/`elif` chain of three or more branches that compares one subject to constants
+(`x == "a"`, `x == Color.RED`) must be a `match` (D003). Files must be in `jig fmt` form (D001).
+
 ## Comments
 
 Only `# why: ...` comments are allowed. Behaviour belongs in docstrings and contracts.

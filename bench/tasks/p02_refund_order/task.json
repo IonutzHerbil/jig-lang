@@ -1,0 +1,11 @@
+{
+  "domain": "project: payments",
+  "project": "store",
+  "module": "store.refunds",
+  "entry": "refund_order",
+  "request": "Add refunds: refund the full order total of the given lines against an existing charge through the payments library, and return the refunded amount as Money. Order problems fail with the same StoreError as the order total does; any payment failure fails with REFUND_FAILED.",
+  "signature": {
+    "python": "def refund_order(charge: ChargeId, customer: Customer, lines: list[Line]) -> Money  # on failure: raise StoreFailure(StoreError.<reason>)",
+    "jig": "def refund_order(charge: ChargeId, customer: Customer, lines: list[Line]) -> Result[Money, StoreError]"
+  }
+}

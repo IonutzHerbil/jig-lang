@@ -1,0 +1,10 @@
+[
+{"args": ["the quick brown fox", 10], "expect": ["the quick", "brown fox"]},
+{"args": ["", 5], "expect": []},
+{"args": ["a b c", 1], "expect": ["a", "b", "c"]},
+{"args": ["hello", 3], "expect": ["hello"]},
+{"args": ["ab cd ef", 5], "expect": ["ab cd", "ef"]},
+{"args": ["x y", 0], "expect": "error"},
+{"args": ["  lots   of   space  ", 20], "expect": ["lots of space"]},
+{"args": ["aaa bb aaaaaa c", 4], "expect": ["aaa", "bb", "aaaaaa", "c"]}
+]

@@ -1,0 +1,9 @@
+[
+{"args": ["[L('apple', 10), L('apple', 5), L('bread', 1)]"], "expect": {"apple": 35, "bread": 9}},
+{"args": ["[L('cheese', 2), L('cheese', 2)]"], "expect": "error:OUT_OF_STOCK"},
+{"args": ["[]"], "expect": "error:EMPTY_CART"},
+{"args": ["[L('caviar', 1)]"], "expect": "error:UNKNOWN_SKU"},
+{"args": ["[L('bread', 10)]"], "expect": {"bread": 0}},
+{"args": ["[L('bread', 0)]"], "expect": "error:INVALID_QUANTITY"},
+{"args": ["[L('wine', 1)]"], "expect": "error:OUT_OF_STOCK"}
+]

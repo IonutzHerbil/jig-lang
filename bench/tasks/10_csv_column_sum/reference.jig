@@ -1,0 +1,37 @@
+module solution
+
+from std.result import Err, Ok, Result
+
+
+def parse_int(text: str) -> Result[int, str]:
+    """An optionally negative integer."""
+    effects: none
+    examples:
+        parse_int("-4") -> Ok(-4)
+        parse_int("abc") -> Err
+    body = text[1:] if text.startswith("-") else text
+    if body == "" or not body.isdigit():
+        return Err(f"not an integer: {text}")
+    return Ok(int(text))
+
+
+def csv_column_sum(csv: str, column: str) -> Result[int, str]:
+    """Sum the named integer column of a header-first CSV text."""
+    effects: none
+    examples:
+        csv_column_sum("name,qty\na,1\nb,2", "qty") -> Ok(3)
+        csv_column_sum("x,y\n1,2", "z") -> Err
+    lines = [line for line in csv.split("\n") if line.strip() != ""]
+    if len(lines) == 0:
+        return Err("no header")
+    header = lines[0].split(",")
+    if column not in header:
+        return Err(f"missing column: {column}")
+    idx = header.index(column)
+    total = 0
+    for line in lines[1:]:
+        fields = line.split(",")
+        if len(fields) != len(header):
+            return Err(f"bad row: {line}")
+        total = total + parse_int(fields[idx])?
+    return Ok(total)

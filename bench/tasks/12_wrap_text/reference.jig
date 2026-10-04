@@ -1,0 +1,20 @@
+module solution
+
+from std.result import Err, Ok, Result
+
+
+def wrap_text(text: str, width: int) -> Result[list[str], str]:
+    """Greedily wrap words into lines of at most width characters."""
+    effects: none
+    examples:
+        wrap_text("the quick brown fox", 10) -> Ok(["the quick", "brown fox"])
+        wrap_text("x y", 0) -> Err
+    if width < 1:
+        return Err("width must be at least 1")
+    lines: list[str] = []
+    for word in text.split():
+        if len(lines) > 0 and len(lines[-1]) + 1 + len(word) <= width:
+            lines[-1] = lines[-1] + " " + word
+        else:
+            lines.append(word)
+    return Ok(lines)

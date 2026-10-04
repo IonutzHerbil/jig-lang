@@ -1,0 +1,8 @@
+[
+{"args": ["ChargeId('ch_anna_798')", "ANNA", "[L('bread', 2)]"], "expect": 798},
+{"args": ["ChargeId('ch_anna_1000')", "ANNA", "[L('bread', 2)]"], "expect": 798},
+{"args": ["ChargeId('ch_anna_100')", "ANNA", "[L('bread', 2)]"], "expect": "error:REFUND_FAILED"},
+{"args": ["ChargeId('bogus')", "ANNA", "[L('apple', 1)]"], "expect": "error:REFUND_FAILED"},
+{"args": ["ChargeId('ch_anna_798')", "ANNA", "[]"], "expect": "error:EMPTY_CART"},
+{"args": ["ChargeId('ch_x_9999')", "SAM", "[L('apple', 0)]"], "expect": "error:INVALID_QUANTITY"}
+]

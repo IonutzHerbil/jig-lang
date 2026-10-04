@@ -1,0 +1,13 @@
+[
+{"args": ["3 4 +"], "expect": 7},
+{"args": ["5 1 2 + 4 * + 3 -"], "expect": 14},
+{"args": ["7 -2 /"], "expect": -3},
+{"args": ["-7 2 /"], "expect": -3},
+{"args": ["1 0 /"], "expect": "error"},
+{"args": ["1 +"], "expect": "error"},
+{"args": ["1 2"], "expect": "error"},
+{"args": [""], "expect": "error"},
+{"args": ["2 x +"], "expect": "error"},
+{"args": ["  10   2 * "], "expect": 20},
+{"args": ["-"], "expect": "error"}
+]

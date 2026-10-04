@@ -1,0 +1,9 @@
+[
+{"args": ["ANNA", "[L('bread', 2)]"], "expect": "ch_anna_798"},
+{"args": ["PAUL", "[L('cheese', 3)]"], "expect": "ch_paul_3753"},
+{"args": ["BLOCKED", "[L('bread', 2)]"], "expect": "error:PAYMENT_DECLINED"},
+{"args": ["ANNA", "[]"], "expect": "error:EMPTY_CART"},
+{"args": ["ANNA", "[L('wine', 1)]"], "expect": "error:OUT_OF_STOCK"},
+{"args": ["ANNA", "[L('caviar', 1)]"], "expect": "error:UNKNOWN_SKU"},
+{"args": ["BLOCKED", "[]"], "expect": "error:EMPTY_CART"}
+]

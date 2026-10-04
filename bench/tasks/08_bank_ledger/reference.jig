@@ -1,0 +1,72 @@
+module solution
+
+from std.result import Err, Ok, Result
+
+
+def parse_amount(text: str) -> Result[int, str]:
+    """A positive integer amount."""
+    effects: none
+    examples:
+        parse_amount("10") -> Ok(10)
+        parse_amount("0") -> Err
+        parse_amount("-5") -> Err
+    if not text.isdigit() or int(text) <= 0:
+        return Err(f"bad amount: {text}")
+    return Ok(int(text))
+
+
+def balance_of(balances: dict[str, int], name: str) -> Result[int, str]:
+    """The balance of an opened account."""
+    effects: none
+    examples:
+        balance_of({"a": 5}, "a") -> Ok(5)
+        balance_of({}, "a") -> Err
+    if name not in balances:
+        return Err(f"no account: {name}")
+    return Ok(balances[name])
+
+
+def apply_op(balances: dict[str, int], op: str) -> Result[dict[str, int], str]:
+    """Apply one ledger operation, returning the new balances."""
+    effects: none
+    examples:
+        apply_op({}, "open a") -> Ok({"a": 0})
+        apply_op({"a": 5}, "withdraw a 6") -> Err
+        apply_op({"a": 5, "b": 0}, "transfer a b 5") -> Ok({"a": 0, "b": 5})
+    parts = op.split(" ")
+    result = dict(balances)
+    if parts[0] == "open" and len(parts) == 2:
+        if parts[1] in balances:
+            return Err(f"already open: {parts[1]}")
+        result[parts[1]] = 0
+    elif parts[0] == "deposit" and len(parts) == 3:
+        result[parts[1]] = balance_of(balances, parts[1])? + parse_amount(parts[2])?
+    elif parts[0] == "withdraw" and len(parts) == 3:
+        have = balance_of(balances, parts[1])?
+        amount = parse_amount(parts[2])?
+        if amount > have:
+            return Err("insufficient funds")
+        result[parts[1]] = have - amount
+    elif parts[0] == "transfer" and len(parts) == 4:
+        have = balance_of(balances, parts[1])?
+        balance_of(balances, parts[2])?
+        amount = parse_amount(parts[3])?
+        if amount > have:
+            return Err("insufficient funds")
+        result[parts[1]] = have - amount
+        result[parts[2]] = result[parts[2]] + amount
+    else:
+        return Err(f"malformed operation: {op}")
+    return Ok(result)
+
+
+def bank_ledger(ops: list[str]) -> Result[dict[str, int], str]:
+    """Final balances after applying every operation in order."""
+    effects: none
+    examples:
+        bank_ledger(["open a", "deposit a 100", "withdraw a 30"]) -> Ok({"a": 70})
+        bank_ledger(["deposit a 5"]) -> Err
+    balances: dict[str, int] = {}
+    for op in ops:
+        balances = apply_op(balances, op)?
+    return Ok(balances)

@@ -1,0 +1,8 @@
+[
+{"args": ["the cat and the hat. The end", 2], "expect": [["the", 3], ["and", 1]]},
+{"args": ["", 3], "expect": []},
+{"args": ["b a B a c", 5], "expect": [["a", 2], ["b", 2], ["c", 1]]},
+{"args": ["It's it", 1], "expect": [["it", 2]]},
+{"args": ["x", 0], "expect": []},
+{"args": ["dog-dog_dog", 1], "expect": [["dog", 3]]}
+]

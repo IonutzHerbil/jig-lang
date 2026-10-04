@@ -1,0 +1,19 @@
+module solution
+
+
+def word_frequencies(text: str, top: int) -> list[tuple[str, int]]:
+    """The top most frequent a-z words, by count descending then alphabetically."""
+    effects: none
+    examples:
+        word_frequencies("b a B a c", 2) -> [("a", 2), ("b", 2)]
+        word_frequencies("", 3) -> []
+    counts: dict[str, int] = {}
+    current = ""
+    for ch in text.lower() + " ":
+        if "a" <= ch and ch <= "z":
+            current = current + ch
+        elif current != "":
+            counts[current] = counts.get(current, 0) + 1
+            current = ""
+    ordered = sorted([(-n, w) for w, n in counts.items()])
+    return [(w, -n) for n, w in ordered[:top]]

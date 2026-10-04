@@ -1,0 +1,9 @@
+{
+  "domain": "graphs",
+  "entry": "shortest_path",
+  "request": "Find the total weight of the shortest path between two nodes of an undirected weighted graph. Edges are given as 'a-b:3' (node names contain no '-' or ':', weights are non-negative integers). A node's path to itself weighs 0 even if it appears in no edge. A malformed edge or an unreachable goal is invalid.",
+  "signature": {
+    "python": "def shortest_path(edges: list[str], start: str, goal: str) -> int",
+    "jig": "def shortest_path(edges: list[str], start: str, goal: str) -> Result[int, str]"
+  }
+}

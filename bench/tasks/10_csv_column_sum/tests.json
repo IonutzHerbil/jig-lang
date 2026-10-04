@@ -1,0 +1,9 @@
+[
+{"args": ["name,qty\na,1\nb,2", "qty"], "expect": 3},
+{"args": ["x,y\n1,2\n\n3,4\n", "y"], "expect": 6},
+{"args": ["x,y\n1,2", "z"], "expect": "error"},
+{"args": ["x,y\n1,abc", "y"], "expect": "error"},
+{"args": ["x,y\n1,-4\n2,5", "y"], "expect": 1},
+{"args": ["x,y", "x"], "expect": 0},
+{"args": ["x,y\n1", "y"], "expect": "error"}
+]

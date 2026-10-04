@@ -1,0 +1,38 @@
+module store.types
+
+type Money = Money(int)
+type Sku = Sku(str)
+type CustomerId = CustomerId(str)
+
+enum Tier:
+    STANDARD
+    GOLD
+    PLATINUM
+
+enum Region:
+    EU
+    UK
+    US
+
+enum StoreError:
+    EMPTY_CART
+    UNKNOWN_SKU
+    INVALID_QUANTITY
+    OUT_OF_STOCK
+    PAYMENT_DECLINED
+    REFUND_FAILED
+
+record Product:
+    sku: Sku
+    name: str
+    unit_price: Money
+    stock: int
+
+record Line:
+    sku: Sku
+    quantity: int
+
+record Customer:
+    id: CustomerId
+    tier: Tier
+    region: Region

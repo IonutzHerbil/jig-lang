@@ -1,0 +1,38 @@
+module store.orders
+
+from std.result import Err, Ok, Result
+from store.catalog import find_product
+from store.pricing import percent_of, tax_rate, tier_discount
+from store.types import Customer, CustomerId, Line, Money, Region, Sku, StoreError, Tier
+
+ANNA: Customer = Customer(id=CustomerId("anna"), tier=Tier.GOLD, region=Region.EU)
+
+
+def line_total(line: Line) -> Result[Money, StoreError]:
+    """Price of one cart line, after checking the SKU, quantity and stock."""
+    effects: none
+    examples:
+        line_total(Line(sku=Sku("apple"), quantity=3)) -> Ok(Money(360))
+        line_total(Line(sku=Sku("apple"), quantity=0)) -> Err(StoreError.INVALID_QUANTITY)
+        line_total(Line(sku=Sku("cheese"), quantity=4)) -> Err(StoreError.OUT_OF_STOCK)
+    if line.quantity < 1:
+        return Err(StoreError.INVALID_QUANTITY)
+    product = find_product(line.sku)?
+    if line.quantity > product.stock:
+        return Err(StoreError.OUT_OF_STOCK)
+    return Ok(product.unit_price * line.quantity)
+
+
+def order_total(customer: Customer, lines: list[Line]) -> Result[Money, StoreError]:
+    """Subtotal, minus the customer's tier discount, plus their region's tax (each rounded down)."""
+    effects: none
+    examples:
+        order_total(ANNA, [Line(sku=Sku("bread"), quantity=2)]) -> Ok(Money(798))
+        order_total(ANNA, []) -> Err(StoreError.EMPTY_CART)
+    if len(lines) == 0:
+        return Err(StoreError.EMPTY_CART)
+    subtotal = Money(0)
+    for line in lines:
+        subtotal = subtotal + line_total(line)?
+    discounted = subtotal - percent_of(subtotal, tier_discount(customer.tier))
+    return Ok(discounted + percent_of(discounted, tax_rate(customer.region)))

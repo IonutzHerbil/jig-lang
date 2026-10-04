@@ -1,0 +1,57 @@
+module solution
+
+from std.result import Err, Ok, Result
+
+
+def is_integer(tok: str) -> bool:
+    """True if tok is an optionally negative run of digits."""
+    effects: none
+    examples:
+        is_integer("-3") -> True
+        is_integer("-") -> False
+        is_integer("x") -> False
+    body = tok[1:] if tok.startswith("-") else tok
+    return body != "" and body.isdigit()
+
+
+def apply_op(op: str, a: int, b: int) -> Result[int, str]:
+    """Apply one operator; division truncates toward zero."""
+    effects: none
+    examples:
+        apply_op("/", 7, -2) -> Ok(-3)
+        apply_op("/", 1, 0) -> Err
+        apply_op("*", 2, 3) -> Ok(6)
+    if op == "+":
+        return Ok(a + b)
+    if op == "-":
+        return Ok(a - b)
+    if op == "*":
+        return Ok(a * b)
+    if b == 0:
+        return Err("division by zero")
+    q = abs(a) // abs(b)
+    return Ok(q if (a < 0) == (b < 0) else -q)
+
+
+def rpn_eval(expr: str) -> Result[int, str]:
+    """Evaluate a space-separated RPN integer expression."""
+    effects: none
+    examples:
+        rpn_eval("3 4 +") -> Ok(7)
+        rpn_eval("1 +") -> Err
+        rpn_eval("") -> Err
+    stack: list[int] = []
+    for tok in expr.split():
+        if tok in ("+", "-", "*", "/"):
+            if len(stack) < 2:
+                return Err("too few operands")
+            b = stack.pop()
+            a = stack.pop()
+            stack.append(apply_op(tok, a, b)?)
+        elif is_integer(tok):
+            stack.append(int(tok))
+        else:
+            return Err(f"unknown token: {tok}")
+    if len(stack) != 1:
+        return Err("malformed expression")
+    return Ok(stack[0])

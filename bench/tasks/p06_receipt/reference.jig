@@ -1,0 +1,32 @@
+module store.receipts
+
+from std.result import Err, Ok, Result
+from store.catalog import find_product
+from store.orders import ANNA, line_total, order_total
+from store.types import Customer, Line, Money, Sku, StoreError
+
+
+def euros(amount: Money) -> str:
+    """Cents written as euros with two decimals."""
+    effects: none
+    examples:
+        euros(Money(1299)) -> "12.99"
+        euros(Money(5)) -> "0.05"
+    cents = int(amount)
+    return f"{cents // 100}.{cents % 100:02d}"
+
+
+def receipt(customer: Customer, lines: list[Line]) -> Result[list[str], StoreError]:
+    """One line per cart line, then the order total."""
+    effects: none
+    examples:
+        receipt(ANNA, [Line(sku=Sku("bread"), quantity=2)]) -> Ok(["Bread x2 7.00", "TOTAL 7.98"])
+        receipt(ANNA, []) -> Err(StoreError.EMPTY_CART)
+    total = order_total(customer, lines)?
+    out: list[str] = []
+    for line in lines:
+        product = find_product(line.sku)?
+        amount = line_total(line)?
+        out.append(f"{product.name} x{line.quantity} {euros(amount)}")
+    out.append(f"TOTAL {euros(total)}")
+    return Ok(out)

@@ -1,0 +1,9 @@
+{
+  "domain": "interpreter",
+  "entry": "rpn_eval",
+  "request": "Evaluate an integer expression in Reverse Polish Notation. Tokens are separated by one or more spaces; numbers are integers and may be negative ('-3'); operators are + - * and /, where / is integer division truncating toward zero. Division by zero, too few operands, operands left over at the end, an unknown token, or an empty expression is invalid.",
+  "signature": {
+    "python": "def rpn_eval(expr: str) -> int",
+    "jig": "def rpn_eval(expr: str) -> Result[int, str]"
+  }
+}

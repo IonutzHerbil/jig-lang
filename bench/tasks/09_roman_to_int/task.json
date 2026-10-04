@@ -1,0 +1,9 @@
+{
+  "domain": "parsing",
+  "entry": "roman_to_int",
+  "request": "Convert a Roman numeral written with I V X L C D M in standard subtractive notation (IV, IX, XL, XC, CD, CM) to an integer. Only uppercase letters are valid; an empty string or any other character is invalid.",
+  "signature": {
+    "python": "def roman_to_int(s: str) -> int",
+    "jig": "def roman_to_int(s: str) -> Result[int, str]"
+  }
+}
