@@ -20,10 +20,27 @@ jig interface examples/shop            # the low-context view for agents
 jig run examples/shop --entry shop.app.main
 jig build examples/shop -o build/      # plain Python package
 jig fmt examples/                      # canonical formatting
+jig fix examples/                      # mechanical fixes: format, drop free-text comments, if-chains to match
 ```
 
-`jig check` prints JSON by default (for agents). Add `--pretty` for humans.
-Exit code is 0 only when there are no errors.
+`jig check` prints JSON by default. Add `--pretty` for humans, or `--for-model` for the compact
+text a model repairs from best. Exit code is 0 only when there are no errors.
+
+## Use Jig from Claude Code
+
+```bash
+python integrations/claude-code/install.py <your project>   # or --user for every project
+```
+
+This adds a `jig` skill (how to write Jig) and a hook: every time Claude writes a `.jig` file, `jig fix`
+and `jig check` run on it and the modules it imports, and any errors go straight back to Claude.
+
+## Measuring it
+
+`bench/` measures whether models write correct software more reliably in Jig than in Python: a model
+gets a feature request, repairs against its toolchain, and is graded on hidden tests. See
+`python -m bench.run --help`; `python -m bench.report` summarizes results, and `python -m bench.learn`
+turns repeated mistakes into hints for the manual.
 
 ## What a Jig file looks like
 
@@ -94,5 +111,9 @@ jig/examples.py     runs examples in a subprocess (PYTHONHASHSEED=0)
 jig/jig_runtime.py  Result, Option, newtypes, records, contracts, Ctx
 jig/formatter.py    canonical formatter
 jig/interface.py    interface view
-jig/cli.py          check, fmt, build, interface, run
+jig/fixer.py        mechanical fixes (jig fix)
+jig/hook.py         Claude Code hook: fix and check every .jig edit
+jig/cli.py          check, fmt, fix, build, interface, run
+bench/              the benchmark: tasks, projects, manuals, runner, report, learner
+integrations/       Claude Code skill and hook installer
 ```

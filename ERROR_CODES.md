@@ -73,14 +73,14 @@ most also carry a `fix` an agent can apply directly.
 | F012 | `*args`, `**kwargs`, argument unpacking | explicit parameters |
 | F013 | Mutable default values | immutable defaults |
 | F014 | Nested functions or classes | top-level declarations |
-| F016 | Free-text comments | docstrings, contracts, or `# why: ...` |
+| F016 | Free-text comments | docstrings, contracts, or `# why: ...`; `jig fix` removes them |
 
 ## Determinism
 
 | Code | Meaning |
 | --- | --- |
-| D001 | File is not in canonical form; run `jig fmt` |
-| D003 | if/elif chain of 3+ branches that compares one subject to constants; use `match` |
+| D001 | File is not in canonical form; run `jig fmt` or `jig fix` |
+| D003 | if/elif chain of 3+ branches that compares one subject to constants; use `match` (`jig fix` rewrites it) |
 
 ## Project files
 

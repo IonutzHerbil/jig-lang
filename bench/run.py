@@ -7,6 +7,8 @@ Conditions:
     python     the model writes Python with its own test_* functions; feedback is crashes and failing self-tests
     jig        the model writes Jig with LANGUAGE.md as its manual; feedback is `jig check` (which runs its examples)
     jig-short  the same, with the short manual in bench/cards/
+    jig-comments  like jig, but the model is asked to comment its reasoning and comments are kept (F016 off)
+    jig-learned   like jig, plus bench/cards/learned.md: mistakes earlier runs made (python -m bench.learn)
 
 Tasks either stand alone or add a module to a project in bench/projects/<name>/<lang>/, whose files are shown
 to the model: Jig sources, manifests and decisions; Python sources, library stubs and DECISIONS.md.
@@ -27,8 +29,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from jig.cli import check_project
-from jig.formatter import format_source
+from jig.cli import check_project, feedback_for_model
+from jig.fixer import fix_source
 from jig.transpiler import build
 
 from .model import make_model
@@ -37,9 +39,15 @@ ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 CODE_RE = re.compile(r"```[a-zA-Z]*\n(.*?)```", re.S)
 
+LEARNED = ROOT / "cards" / "learned.md"
 MANUALS = {
     "jig": (REPO / "LANGUAGE.md").read_text(encoding="utf-8"),
     "jig-short": (ROOT / "cards" / "jig_short.md").read_text(encoding="utf-8"),
+    "jig-comments": (REPO / "LANGUAGE.md").read_text(encoding="utf-8")
+    + "\n\nIn this project free-text `#` comments ARE allowed, overriding the rule above: explain your plan and "
+    "reasoning in comments as you write the code, e.g. what each step does and why.",
+    "jig-learned": (REPO / "LANGUAGE.md").read_text(encoding="utf-8") + "\n\n"
+    + (LEARNED.read_text(encoding="utf-8") if LEARNED.exists() else ""),
 }
 PROJECT_MANUAL = (ROOT / "cards" / "jig_short_project.md").read_text(encoding="utf-8")
 PYTHON_SYSTEM = (
@@ -148,7 +156,7 @@ def project_context(name: str, lang: str) -> str:
     return "\n\n".join(f"### {f.relative_to(base).as_posix()}\n{text}" for f, text in shown.items())
 
 
-def check(lang: str, code: str, work: Path, module: str) -> tuple[bool, list[str], str, Path]:
+def check(lang: str, code: str, work: Path, module: str, comments: bool = False) -> tuple[bool, list[str], str, Path]:
     """Run the condition's own toolchain. Returns (ok, error codes, feedback text, build dir)."""
     build_dir = work / "build"
     parts = module.split(".")
@@ -166,14 +174,13 @@ def check(lang: str, code: str, work: Path, module: str) -> tuple[bool, list[str
     src = work / "src"
     target = src.joinpath(*parts[:-1], parts[-1] + ".jig")
     target.parent.mkdir(parents=True, exist_ok=True)
-    # Formatting is mechanical, so the tool does it, as an agent's toolchain would.
-    target.write_text(format_source(code), encoding="utf-8")
-    project, summary = check_project([str(src)])
+    # Mechanical fixes (formatting, comments, if-chains to match) are the tool's job, as in an agent's toolchain.
+    target.write_text(fix_source(code, keep_comments=comments)[0], encoding="utf-8")
+    project, summary = check_project([str(src)], allow_comments=comments)
     if summary["ok"]:
         shutil.rmtree(build_dir, ignore_errors=True)
         build(project, build_dir, fakes=True)
-    diags = summary["diagnostics"]
-    return summary["ok"], [d["code"] for d in diags], json.dumps(diags, indent=1), build_dir
+    return summary["ok"], [d["code"] for d in summary["diagnostics"]], feedback_for_model(project), build_dir
 
 
 def hidden(build_dir: Path, task: dict, module: str, cases: list[dict]) -> list:
@@ -214,7 +221,7 @@ def run_sample(model, task_dir: Path, task: dict, cond: str, rounds: int) -> dic
     else:
         system = PYTHON_SYSTEM
     turns = [prompt]
-    record = {"rounds": [], "feedback": [], "tokens": 0, "prompt_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
+    record = {"rounds": [], "feedback": [], "code": [], "tokens": 0, "prompt_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
     ok, build_dir = False, None
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -226,8 +233,9 @@ def run_sample(model, task_dir: Path, task: dict, cond: str, rounds: int) -> dic
                 record[key] += getattr(reply, key)
             blocks = CODE_RE.findall(reply.text)
             code = max(blocks, key=len) if blocks else reply.text
-            ok, codes, feedback, build_dir = check(lang, code, work, module)
+            ok, codes, feedback, build_dir = check(lang, code, work, module, comments=cond == "jig-comments")
             record["rounds"].append(codes)
+            record["code"].append(code)
             if ok:
                 break
             record["feedback"].append(feedback[:1500])

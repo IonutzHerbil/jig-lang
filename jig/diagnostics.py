@@ -49,6 +49,28 @@ class Diagnostic:
         return (self.file, self.line, self.col, self.code)
 
 
+def render_for_model(diags: list[Diagnostic], sources: dict[str, str]) -> str:
+    """Compact feedback for a model: the code, the message, the offending line, and the fix. No paths or JSON."""
+    out = []
+    seen = set()
+    for d in diags:
+        if (d.file, d.line, d.code, d.message) in seen:
+            continue
+        seen.add((d.file, d.line, d.code, d.message))
+        lines = sources.get(d.file, "").split("\n")
+        where = f"{d.module or d.file} line {d.line}" + (f", in {d.function}" if d.function else "")
+        text = f"{d.severity} {d.code} ({where}): {d.message}"
+        if 0 < d.line <= len(lines) and lines[d.line - 1].strip():
+            text += f"\n    {d.line} | {lines[d.line - 1].rstrip()}"
+        cands = d.context.get("candidates")
+        if cands and not (d.fix and d.fix.get("kind") == "replace_token"):
+            text += f"\n    did you mean: {', '.join(cands)}"
+        if d.fix:
+            text += f"\n    fix: {describe_fix(d.fix)}"
+        out.append(text)
+    return "\n\n".join(out)
+
+
 def describe_fix(fix: dict[str, Any]) -> str:
     kind = fix.get("kind")
     if kind == "replace_token":
@@ -58,7 +80,7 @@ def describe_fix(fix: dict[str, Any]) -> str:
     if kind == "add_import":
         return f"add '{fix['text']}'"
     if kind == "insert_clause":
-        return f"insert: {fix['text']}"
+        return f"insert: {fix['text']}" + (f". {fix['hint']}" if fix.get("hint") else "")
     return str(fix.get("hint", kind))
 
 

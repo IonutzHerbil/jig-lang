@@ -19,6 +19,7 @@ from typing import Any
 from . import std
 from .decisions import Decision, load_decisions
 from .diagnostics import Diagnostic, replace_fix
+from .fixer import eq_subject
 from .formatter import first_difference, format_source
 from .manifest import Manifest, load_manifests
 from .preprocess import Preprocessed, preprocess
@@ -117,18 +118,6 @@ def _is_docstring(stmt: ast.stmt) -> bool:
     return isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str)
 
 
-def _eq_subject(test: ast.expr) -> str | None:
-    """'x' for a test like `x == "a"` or `x == Color.RED`, else None."""
-    if (
-        isinstance(test, ast.Compare)
-        and len(test.ops) == 1
-        and isinstance(test.ops[0], ast.Eq)
-        and isinstance(test.comparators[0], (ast.Constant, ast.Attribute))
-    ):
-        return ast.unparse(test.left)
-    return None
-
-
 def _bound_names(stmts: list[ast.stmt]) -> set[str]:
     names: set[str] = set()
     for node in ast.walk(ast.Module(body=stmts, type_ignores=[])):
@@ -166,7 +155,9 @@ def _project_roots(files: list[Path]) -> list[Path]:
 
 
 class Project:
-    def __init__(self) -> None:
+    def __init__(self, allow_comments: bool = False) -> None:
+        # Experimental: lets bench measure whether free-text comments help models (F016 off).
+        self.allow_comments = allow_comments
         self.modules: dict[str, ModuleInfo] = {}
         self.manifests: dict[str, Manifest] = {}
         self.decisions: dict[str, Decision] = {}
@@ -510,7 +501,7 @@ class Project:
 
     def _check_module(self, mod: ModuleInfo) -> None:
         for line, col, text in mod.pre.comments:
-            if not text.startswith("# why:"):
+            if not text.startswith("# why:") and not self.allow_comments:
                 self.diag(
                     "F016",
                     "free-text comments are not allowed; use docstrings, contracts, or '# why:' for decisions",
@@ -666,7 +657,10 @@ class Project:
             if ex.expected_ast is not None:
                 ec.visit(ex.expected_ast)
         if fi.examples and _return_base(fi) == "Result" and not any(ex.is_err for ex in fi.examples):
-            err("C002", f"'{fn}' returns Result but has no example of a failure", node.lineno, fix={"kind": "insert_clause", "text": f"{fn}(...) -> Err(...)"})
+            err("C002", f"'{fn}' returns Result but has no example of a failure", node.lineno, fix={"kind": "insert_clause", "text": f"{fn}(...) -> Err(...)", "hint": (
+                f"add an example whose input makes the body return Err, e.g. `{fn}(<bad input>) -> Err`. An input a "
+                "requires clause refuses is `-> rejected`, not a failure; if that is the only way to fail, return Err "
+                "from the body instead of using requires")})
         if fi.requires and fi.examples and not any(ex.kind == "rejected" for ex in fi.examples):
             err("C004", f"'{fn}' has a requires clause but no 'rejected' example", node.lineno, severity="warning")
 
@@ -761,11 +755,11 @@ class BodyChecker(ast.NodeVisitor):
 
     def visit_If(self, node: ast.If) -> None:
         if id(node) not in self._chain_seen:
-            count, cur, subjects = 1, node, {_eq_subject(node.test)}
+            count, cur, subjects = 1, node, {eq_subject(node.test)}
             while len(cur.orelse) == 1 and isinstance(cur.orelse[0], ast.If):
                 cur = cur.orelse[0]
                 self._chain_seen.add(id(cur))
-                subjects.add(_eq_subject(cur.test))
+                subjects.add(eq_subject(cur.test))
                 count += 1
             if cur.orelse:
                 count += 1

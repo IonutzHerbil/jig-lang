@@ -1,4 +1,4 @@
-"""jig command line: check, fmt, build, interface, run. JSON by default."""
+"""jig command line: check, fmt, fix, build, interface, run. JSON by default."""
 
 from __future__ import annotations
 
@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from .checker import Project
+from .diagnostics import render_for_model
 from .examples import run_examples
+from .fixer import fix_source
 from .formatter import first_difference, format_source
 from .interface import render_interface
 from .transpiler import build
@@ -31,8 +33,8 @@ def discover(paths: list[str]) -> list[Path]:
     return files
 
 
-def check_project(paths: list[str], run_ex: bool = True) -> tuple[Project, dict[str, Any]]:
-    project = Project()
+def check_project(paths: list[str], run_ex: bool = True, allow_comments: bool = False) -> tuple[Project, dict[str, Any]]:
+    project = Project(allow_comments=allow_comments)
     project.load(discover(paths))
     total = passed = 0
     if run_ex and not project.has_errors:
@@ -51,9 +53,18 @@ def check_project(paths: list[str], run_ex: bool = True) -> tuple[Project, dict[
     return project, summary
 
 
+def feedback_for_model(project: Project) -> str:
+    """The project's diagnostics in the compact form models repair from best."""
+    diags = project.sorted_diags()
+    sources = {d.file: Path(d.file).read_text(encoding="utf-8") for d in diags if Path(d.file).is_file()}
+    return render_for_model(diags, sources)
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     project, summary = check_project(args.paths, run_ex=not args.no_examples)
-    if args.pretty:
+    if args.for_model:
+        print(feedback_for_model(project) or "ok")
+    elif args.pretty:
         for d in project.sorted_diags():
             print(d.pretty())
         ex = summary["examples"]
@@ -74,6 +85,19 @@ def cmd_fmt(args: argparse.Namespace) -> int:
             changed.append({"file": str(path), "line": first_difference(text, formatted)})
             if not args.check:
                 path.write_text(formatted, encoding="utf-8")
+    print(json.dumps({"check": args.check, "changed": changed}, indent=2))
+    return 1 if (args.check and changed) else 0
+
+
+def cmd_fix(args: argparse.Namespace) -> int:
+    changed = []
+    for path in discover(args.paths):
+        text = path.read_text(encoding="utf-8")
+        fixed, applied = fix_source(text)
+        if fixed != text:
+            changed.append({"file": str(path), "line": first_difference(text, fixed), "applied": applied})
+            if not args.check:
+                path.write_text(fixed, encoding="utf-8")
     print(json.dumps({"check": args.check, "changed": changed}, indent=2))
     return 1 if (args.check and changed) else 0
 
@@ -127,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("check", help="check a project and run its examples")
     p.add_argument("paths", nargs="+")
     p.add_argument("--pretty", action="store_true", help="human-readable output")
+    p.add_argument("--for-model", action="store_true", help="compact text for a model to repair from")
     p.add_argument("--no-examples", action="store_true", help="skip running examples")
     p.set_defaults(func=cmd_check)
 
@@ -134,6 +159,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("paths", nargs="+")
     p.add_argument("--check", action="store_true", help="fail instead of rewriting")
     p.set_defaults(func=cmd_fmt)
+
+    p = sub.add_parser("fix", help="apply mechanical fixes: format, drop free-text comments, if-chains to match")
+    p.add_argument("paths", nargs="+")
+    p.add_argument("--check", action="store_true", help="fail instead of rewriting")
+    p.set_defaults(func=cmd_fix)
 
     p = sub.add_parser("build", help="check, then transpile to a Python package")
     p.add_argument("paths", nargs="+")

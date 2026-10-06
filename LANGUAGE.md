@@ -162,6 +162,7 @@ MAX_RETRY: int = 3
 
 An `if`/`elif` chain of three or more branches that compares one subject to constants
 (`x == "a"`, `x == Color.RED`) must be a `match` (D003). Files must be in `jig fmt` form (D001).
+`jig fix` applies both, and removes free-text comments (F016), without changing behavior.
 
 ## Comments
 
@@ -237,6 +238,7 @@ Reference material for the model writing code. Not checked.
 | --- | --- |
 | `jig check <paths> [--pretty] [--no-examples]` | all checks, then runs examples; JSON by default; exit 1 on errors |
 | `jig fmt <paths> [--check]` | canonical formatting (spaces, no trailing whitespace, sorted imports) |
+| `jig fix <paths> [--check]` | `fmt`, plus the mechanical fixes for F016 and D003 |
 | `jig interface <paths>` | signatures, contracts, and examples without bodies |
 | `jig build <paths> -o <dir>` | check, then write a Python package plus `jig_runtime.py` |
 | `jig run <paths> --entry module.function` | check, build, and call the entry with a real `Ctx` if it takes one |

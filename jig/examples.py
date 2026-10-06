@@ -100,9 +100,17 @@ def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diag
         code = {"fail": "C001", "ensures": "C003", "crash": "C005"}[status]
         context = {"call": ex.call, "expected": ex.expected or ex.kind, "detail": r.get("detail", "")}
         fix = None
+        detail = r.get("detail", "")
         if status == "fail" and "actual" in r:
             context["actual"] = r["actual"]
             fix = {"kind": "review", "hint": "fix the body, or update the example if the new behavior is intended"}
+        elif detail.startswith("requires rejected the input"):
+            fix = {"kind": "review", "hint": (
+                f"`{ex.call}` never reaches the body: a requires clause refuses it. If refusing it is intended, "
+                f"write `{ex.call} -> rejected`. If it should return Err, drop that requires and check the "
+                "condition in the body: `if ...: return Err(...)`")}
+        elif detail.startswith("expected the requires clause to reject"):
+            fix = {"kind": "review", "hint": "add a `requires:` clause that refuses this input, or change the expected result"}
         diags.append(
             Diagnostic(
                 code=code,
