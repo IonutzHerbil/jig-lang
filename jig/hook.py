@@ -15,6 +15,7 @@ import re
 import sys
 from pathlib import Path
 
+from .autoimport import fix_imports
 from .cli import check_project, feedback_for_model
 from .fixer import fix_source
 
@@ -60,6 +61,9 @@ def main() -> int:
     if fixed != text:
         file.write_text(fixed, encoding="utf-8")
     root = project_root(file.resolve(), Path(event.get("cwd") or ".").resolve())
+    everything = [f for f in root.rglob("*.jig") if not SKIP & set(f.relative_to(root).parts)]
+    imports = fix_imports(everything, only={file})
+    applied.update({"imports": imports["imports"], "import paths": imports["paths"]})
     project, summary = check_project([str(f) for f in with_imports(file, root)])
     note = ""
     if any(applied.values()):

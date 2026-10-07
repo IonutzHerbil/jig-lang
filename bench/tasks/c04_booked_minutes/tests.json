@@ -1,0 +1,5 @@
+[
+{"args": ["Specialty.GENERAL"], "expect": {"dr_lee": 90, "dr_khan": 0}},
+{"args": ["Specialty.DENTAL"], "expect": {"dr_ito": 120}},
+{"args": ["Specialty.CARDIO"], "expect": "error:CALENDAR_DOWN"}
+]

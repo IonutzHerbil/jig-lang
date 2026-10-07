@@ -1,0 +1,20 @@
+lib calendar
+
+type SlotRef = SlotRef(str)
+
+enum CalendarError:
+    UNAVAILABLE
+    CONFLICT
+
+record Slot:
+    doctor: str
+    start: int
+    length: int
+
+declare bookings_for(doctor: str) -> Result[list[Slot], CalendarError]
+    effects: net
+    doc: "Every existing booking of a doctor today; start is minutes since midnight"
+
+declare reserve(doctor: str, start: int, length: int) -> Result[SlotRef, CalendarError]
+    effects: net
+    doc: "Reserve a slot; CONFLICT if it overlaps an existing booking"

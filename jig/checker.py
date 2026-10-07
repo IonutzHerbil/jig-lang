@@ -30,27 +30,23 @@ UPPER = re.compile(r"[A-Z][A-Z0-9_]*$")
 
 RESERVED = frozenset({"result", "effects", "requires", "ensures", "examples"})
 
+# Only what breaks a guarantee is forbidden: hidden shared state, imports that dodge the closed world, and
+# features not supported yet. Everything else in Python (while, try/except, raise, None, comments, nested
+# helpers, del) is allowed: correct, idiomatic Python is valid Jig.
 FORBIDDEN_NODES: dict[type, tuple[str, str]] = {
-    ast.While: ("F009", "'while' is not allowed; use 'for' over a bounded range"),
-    ast.Raise: ("F007", "exceptions are not allowed; return Err(...) instead"),
-    ast.Try: ("F007", "try/except is not allowed; errors are Result values"),
     ast.Global: ("F010", "global state is not allowed; pass values as parameters"),
     ast.Nonlocal: ("F010", "nonlocal state is not allowed; pass values as parameters"),
     ast.Import: ("F005", "imports belong at the top of the module"),
     ast.ImportFrom: ("F005", "imports belong at the top of the module"),
-    ast.FunctionDef: ("F014", "nested functions are not allowed; define it at the top level"),
     ast.ClassDef: ("F014", "nested types are not allowed; declare records at the top level"),
-    ast.AsyncFunctionDef: ("S006", "async is not supported in v0"),
-    ast.AsyncFor: ("S006", "async is not supported in v0"),
-    ast.AsyncWith: ("S006", "async is not supported in v0"),
-    ast.Await: ("S006", "async is not supported in v0"),
-    ast.With: ("S006", "'with' is not supported; use Ctx capabilities"),
-    ast.Yield: ("S006", "generators are not supported in v0"),
-    ast.YieldFrom: ("S006", "generators are not supported in v0"),
-    ast.Delete: ("S006", "'del' is not supported; values are immutable"),
+    ast.AsyncFunctionDef: ("S006", "async is not supported yet"),
+    ast.AsyncFor: ("S006", "async is not supported yet"),
+    ast.AsyncWith: ("S006", "async is not supported yet"),
+    ast.Await: ("S006", "async is not supported yet"),
+    ast.With: ("S006", "'with' is not supported; files and connections go through a lib manifest"),
+    ast.Yield: ("S006", "generators are not supported yet; return a list"),
+    ast.YieldFrom: ("S006", "generators are not supported yet; return a list"),
 }
-if hasattr(ast, "TryStar"):
-    FORBIDDEN_NODES[ast.TryStar] = ("F007", "try/except is not allowed; errors are Result values")
 
 
 # ---------------------------------------------------------------- model
@@ -90,6 +86,7 @@ class FuncInfo:
     requires: list[Clause] = field(default_factory=list)
     ensures: list[Clause] = field(default_factory=list)
     examples: list[Example] = field(default_factory=list)
+    example_imports: set[str] = field(default_factory=set)  # names examples use without the module importing them
     docstring: str | None = None
 
 
@@ -101,17 +98,31 @@ class ModuleInfo:
     pre: Preprocessed
     tree: ast.Module | None = None
     imports: dict[str, tuple[str, str, int]] = field(default_factory=dict)
+    pymods: dict[str, tuple[str, int]] = field(default_factory=dict)  # `import re` -> {"re": ("re", line)}
     functions: dict[str, FuncInfo] = field(default_factory=dict)
     records: dict[str, dict[str, tuple[ast.expr, bool]]] = field(default_factory=dict)
     enums: dict[str, list[str]] = field(default_factory=dict)
     newtypes: dict[str, str] = field(default_factory=dict)
-    constants: dict[str, ast.AnnAssign] = field(default_factory=dict)
+    constants: dict[str, ast.AnnAssign | ast.Assign] = field(default_factory=dict)
 
     def declared_names(self) -> set[str]:
         return set(self.functions) | set(self.records) | set(self.enums) | set(self.newtypes) | set(self.constants)
 
     def global_names(self) -> set[str]:
-        return self.declared_names() | set(self.imports)
+        return self.declared_names() | set(self.imports) | set(self.pymods)
+
+
+def stdlib_module(name: str) -> Any | None:
+    """The real module for an importable stdlib name (or a submodule of one), else None."""
+    if name not in std.STDLIB:
+        return None
+    import importlib
+
+    return importlib.import_module(name)
+
+
+def public_names(module: Any) -> list[str]:
+    return [n for n in dir(module) if not n.startswith("_")]
 
 
 def _is_docstring(stmt: ast.stmt) -> bool:
@@ -123,6 +134,10 @@ def _bound_names(stmts: list[ast.stmt]) -> set[str]:
     for node in ast.walk(ast.Module(body=stmts, type_ignores=[])):
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names.add(node.id)
+        elif isinstance(node, ast.FunctionDef):
+            names.add(node.name)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
         elif isinstance(node, ast.arg):
             names.add(node.arg)
         elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
@@ -140,6 +155,10 @@ def _return_base(fi: FuncInfo | None) -> str | None:
     return base.id if isinstance(base, ast.Name) else None
 
 
+def _signature(fi: FuncInfo) -> str:
+    return f"{fi.name}({', '.join(fi.params)})"
+
+
 def _project_roots(files: list[Path]) -> list[Path]:
     """The nearest ancestor of each file that holds lib/ or .decisions/."""
     roots: set[Path] = set()
@@ -155,10 +174,9 @@ def _project_roots(files: list[Path]) -> list[Path]:
 
 
 class Project:
-    def __init__(self, allow_comments: bool = False) -> None:
-        # Experimental: lets bench measure whether free-text comments help models (F016 off).
-        self.allow_comments = allow_comments
+    def __init__(self) -> None:
         self.modules: dict[str, ModuleInfo] = {}
+        self._inferred: dict[tuple[str, str], set[str]] = {}
         self.manifests: dict[str, Manifest] = {}
         self.decisions: dict[str, Decision] = {}
         self.diags: list[Diagnostic] = []
@@ -263,6 +281,8 @@ class Project:
             target_mod, target_name, _ = mod.imports[name]
             if target_mod in std.STD:
                 return ("std", target_mod, target_name) if target_name in std.STD[target_mod] else None
+            if (pymod := stdlib_module(target_mod)) is not None:
+                return ("py", target_mod, target_name) if hasattr(pymod, target_name) else None
             manifest = self.manifests.get(target_mod[4:]) if target_mod.startswith("lib.") else None
             if manifest is not None:
                 return ("lib", manifest, target_name) if target_name in manifest.exports else None
@@ -272,6 +292,8 @@ class Project:
         return None
 
     def type_desc(self, mod: ModuleInfo, name: str) -> tuple | None:
+        if name in ("int", "float"):
+            return ("prim", name)  # a plain number: mixing it with a newtype is T002
         r = self.resolve(mod, name)
         if r is None:
             return None
@@ -280,6 +302,26 @@ class Project:
         if r[0] == "std" and r[1] == "std.ctx" and r[2] == "Ctx":
             return ("ctx",)
         return None
+
+    def effects_of(self, mod: ModuleInfo, fi: FuncInfo) -> set[str]:
+        """Declared effects, or the ones its body uses when it declares none (inferred, recursion-safe)."""
+        if fi.effects is not None:
+            return fi.effects
+        key = (mod.name, fi.name)
+        if key not in self._inferred:
+            self._inferred[key] = set()
+            checker, _ = self._body_checker(mod, fi, silent=True)
+            self._inferred[key] = set(checker.used_effects)
+        return self._inferred[key]
+
+    def example_import(self, mod: ModuleInfo, name: str) -> str | None:
+        """The import an example needs for a name declared exactly once in std, the project, or a manifest.
+
+        Examples are test data: they may use any such name without the module importing it."""
+        sources = [f"from {m} import {name}" for m, exports in std.STD.items() if name in exports]
+        sources += [f"from {o.name} import {name}" for o in self.modules.values() if o is not mod and name in o.declared_names()]
+        sources += [f"from lib.{k} import {name}" for k, man in self.manifests.items() if name in man.exports]
+        return sources[0] if len(sources) == 1 else None
 
     def import_fix(self, mod: ModuleInfo, name: str) -> dict[str, Any] | None:
         for m, exports in std.STD.items():
@@ -312,20 +354,15 @@ class Project:
                 for alias in stmt.names:
                     if alias.name == "*":
                         self.diag("F005", "star imports are not allowed; import each name explicitly", mod, stmt.lineno)
-                    elif alias.asname:
-                        self.diag(
-                            "F005",
-                            f"import aliases are not allowed; use '{alias.name}' directly",
-                            mod,
-                            stmt.lineno,
-                            fix={"kind": "replace_token", "from": f"{alias.name} as {alias.asname}", "to": alias.name, "confidence": "high"},
-                        )
                     else:
-                        claim(alias.name, stmt)
-                        mod.imports[alias.name] = (stmt.module or "", alias.name, stmt.lineno)
+                        local = alias.asname or alias.name
+                        claim(local, stmt)
+                        mod.imports[local] = (stmt.module or "", alias.name, stmt.lineno)
             elif isinstance(stmt, ast.Import):
-                names = ", ".join(a.name for a in stmt.names)
-                self.diag("F005", f"'import {names}' is not allowed; use 'from <module> import <name>'", mod, stmt.lineno)
+                for alias in stmt.names:
+                    local = alias.asname or alias.name.split(".")[0]
+                    claim(local, stmt)
+                    mod.pymods[local] = (alias.name if alias.asname else local, stmt.lineno)
             elif isinstance(stmt, ast.ClassDef):
                 claim(stmt.name, stmt)
                 if stmt.name in mod.pre.records:
@@ -369,14 +406,9 @@ class Project:
                 if stmt.value is None:
                     self.diag("S004", f"constant '{stmt.target.id}' needs a value", mod, stmt.lineno)
                 mod.constants[stmt.target.id] = stmt
-            elif isinstance(stmt, ast.Assign):
-                self.diag(
-                    "T004",
-                    "module constants need a type annotation: NAME: type = value",
-                    mod,
-                    stmt.lineno,
-                    fix={"kind": "insert_annotation", "hint": "NAME: <type> = value"},
-                )
+            elif isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+                claim(stmt.targets[0].id, stmt)
+                mod.constants[stmt.targets[0].id] = stmt
             else:
                 self.diag("S005", "only declarations are allowed at module level", mod, stmt.lineno)
 
@@ -499,20 +531,26 @@ class Project:
 
     # -- checking
 
+    def _unknown_module(self, mod: ModuleInfo, m: str, line: int) -> None:
+        top = m.split(".")[0]
+        hint = std.STDLIB_EFFECTFUL.get(m) or std.STDLIB_EFFECTFUL.get(top)
+        if hint:
+            self.diag("R003", f"module '{m}' has effects Jig tracks another way: {hint}", mod, line, context={"module": m})
+            return
+        fix, cands = replace_fix(m, [*std.STD, *std.STDLIB, *self.modules, *(f"lib.{k}" for k in self.manifests)])
+        self.diag("R003", f"unknown module '{m}'", mod, line, context={"candidates": cands}, fix=fix)
+
     def _check_module(self, mod: ModuleInfo) -> None:
-        for line, col, text in mod.pre.comments:
-            if not text.startswith("# why:") and not self.allow_comments:
-                self.diag(
-                    "F016",
-                    "free-text comments are not allowed; use docstrings, contracts, or '# why:' for decisions",
-                    mod,
-                    line,
-                    col,
-                    fix={"kind": "rewrite_comment", "hint": "move behavior into the docstring or a contract, or prefix with '# why:'"},
-                )
+        for local, (m, line) in mod.pymods.items():
+            if stdlib_module(m) is None:
+                self._unknown_module(mod, m, line)
 
         for local, (m, n, line) in mod.imports.items():
-            if m in std.STD:
+            if (pymod := stdlib_module(m)) is not None:
+                if not hasattr(pymod, n):
+                    fix, cands = replace_fix(n, public_names(pymod))
+                    self.diag("R003", f"'{m}' has no export '{n}'", mod, line, context={"candidates": cands}, fix=fix)
+            elif m in std.STD:
                 if n not in std.STD[m]:
                     fix, cands = replace_fix(n, std.STD[m])
                     self.diag("R003", f"'{m}' has no export '{n}'", mod, line, context={"exports": sorted(std.STD[m]), "candidates": cands}, fix=fix)
@@ -536,8 +574,7 @@ class Project:
                     fix, cands = replace_fix(n, target.declared_names())
                     self.diag("R003", f"module '{m}' has no declaration '{n}'", mod, line, context={"declarations": sorted(target.declared_names()), "candidates": cands}, fix=fix)
             else:
-                fix, cands = replace_fix(m, [*std.STD, *self.modules, *(f"lib.{k}" for k in self.manifests)])
-                self.diag("R003", f"unknown module '{m}'", mod, line, context={"candidates": cands}, fix=fix)
+                self._unknown_module(mod, m, line)
 
         for name in list(mod.records) + list(mod.enums) + list(mod.newtypes):
             if not PASCAL.match(name):
@@ -557,7 +594,8 @@ class Project:
             if not UPPER.match(name):
                 self._naming(mod, name, "constants use UPPER_CASE", node.lineno)
             checker = BodyChecker(self, mod, None, set(), {})
-            checker.visit(node.annotation)
+            if isinstance(node, ast.AnnAssign):
+                checker.visit(node.annotation)
             if node.value is not None:
                 checker.visit(node.value)
             if checker.used_effects:
@@ -587,50 +625,30 @@ class Project:
             err("F012", "*args and **kwargs are not allowed; declare each parameter with a type", node.lineno)
         for arg in all_args:
             if arg.annotation is None:
-                err("T004", f"parameter '{arg.arg}' needs a type", arg.lineno, arg.col_offset, fix={"kind": "insert_annotation", "hint": f"{arg.arg}: <type>"})
+                err("T004", f"parameter '{arg.arg}' has no type, so calls to '{fn}' are checked less", arg.lineno, arg.col_offset, severity="warning", fix={"kind": "insert_annotation", "hint": f"{arg.arg}: <type>"})
             if not SNAKE.match(arg.arg):
                 err("S003", f"'{arg.arg}': parameters use snake_case", arg.lineno, arg.col_offset)
             if arg.arg in RESERVED:
                 err("S003", f"'{arg.arg}' is a reserved name", arg.lineno, arg.col_offset)
-        defaults = a.defaults + [d for d in a.kw_defaults if d is not None]
-        for d in defaults:
+        for d in a.defaults + [d for d in a.kw_defaults if d is not None]:
             mutable = isinstance(d, (ast.List, ast.Dict, ast.Set)) or (
                 isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id in std.MUTABLE_CALLS
             )
             if mutable:
-                err("F013", "mutable default values are not allowed", d.lineno, d.col_offset)
+                err("F013", "mutable default values are not allowed: they are shared between calls", d.lineno, d.col_offset)
         if node.returns is None:
-            err("T004", f"'{fn}' needs a return type", node.lineno, fix={"kind": "insert_annotation", "hint": "-> <type>"})
-        if fi.docstring is None:
-            err("S002", f"'{fn}' needs a docstring", node.lineno, fix={"kind": "insert_clause", "text": '"""Describe what this function does."""'})
+            err("T004", f"'{fn}' has no return type, so its callers are checked less", node.lineno, severity="warning", fix={"kind": "insert_annotation", "hint": "-> <type>"})
 
-        body = node.body[1:] if fi.docstring is not None else node.body
-        if not body:
-            err("S002", f"'{fn}' has no body", node.lineno)
-
-        var_types: dict[str, tuple] = {}
-        for arg in all_args:
-            if isinstance(arg.annotation, ast.Name):
-                t = self.type_desc(mod, arg.annotation.id)
-                if t:
-                    var_types[arg.arg] = t
-
-        checker = BodyChecker(self, mod, fi, set(fi.params) | _bound_names(body), var_types)
-        for arg in all_args:
-            if arg.annotation is not None:
-                checker.visit(arg.annotation)
-        if node.returns is not None:
-            checker.visit(node.returns)
-        for d in defaults:
-            checker.visit(d)
-        for stmt in body:
-            checker.visit(stmt)
-
+        checker, var_types = self._body_checker(mod, fi)
         used = checker.used_effects
-        if fi.effects is None:
-            suggestion = ", ".join(sorted(used)) or "none"
-            err("S002", f"'{fn}' needs an effects clause", node.lineno, fix={"kind": "insert_clause", "text": f"effects: {suggestion}", "confidence": "high"})
-        else:
+        for arg in all_args:
+            if var_types.get(arg.arg) == ("ctx",) and arg.arg not in checker.names_used:
+                err(
+                    "W002", f"parameter '{arg.arg}: Ctx' is never used; take a Ctx only for time, randomness or logging",
+                    arg.lineno, arg.col_offset, severity="warning",
+                )
+        # Declaring effects is optional: undeclared ones are inferred. A declaration is an assertion, checked here.
+        if fi.effects is not None:
             for eff, sites in sorted(used.items()):
                 if any(std.covers(d, eff) for d in fi.effects):
                     continue
@@ -646,23 +664,47 @@ class Project:
 
         for clause in fi.requires:
             self._check_contract(mod, fi, clause, var_types, with_result=False)
+            if _return_base(fi) == "Result":
+                err(
+                    "C006",
+                    f"'{fn}' returns Result, so bad input is an Err, not a requires: a requires failure crashes the "
+                    "caller instead of returning your error",
+                    clause.line,
+                    fix={"kind": "review", "hint": f"delete `requires: {clause.text}` and start the body with "
+                         f"`if not ({clause.text}): return Err(...)`, using the error the request names for that input; "
+                         "if a function you call already returns that Err, just propagate it with `?`"},
+                )
         for clause in fi.ensures:
             self._check_contract(mod, fi, clause, var_types, with_result=True)
-
-        if not fi.examples:
-            err("S002", f"'{fn}' needs at least one example", node.lineno, fix={"kind": "insert_clause", "text": f"examples:\n    {fn}(...) -> expected"})
         for ex in fi.examples:
-            ec = BodyChecker(self, mod, None, set(), {})
+            ec = BodyChecker(self, mod, None, set(), {}, example_of=fi)
             ec.visit(ex.call_ast)
             if ex.expected_ast is not None:
                 ec.visit(ex.expected_ast)
-        if fi.examples and _return_base(fi) == "Result" and not any(ex.is_err for ex in fi.examples):
-            err("C002", f"'{fn}' returns Result but has no example of a failure", node.lineno, fix={"kind": "insert_clause", "text": f"{fn}(...) -> Err(...)", "hint": (
-                f"add an example whose input makes the body return Err, e.g. `{fn}(<bad input>) -> Err`. An input a "
-                "requires clause refuses is `-> rejected`, not a failure; if that is the only way to fail, return Err "
-                "from the body instead of using requires")})
-        if fi.requires and fi.examples and not any(ex.kind == "rejected" for ex in fi.examples):
-            err("C004", f"'{fn}' has a requires clause but no 'rejected' example", node.lineno, severity="warning")
+
+    def _body_checker(self, mod: ModuleInfo, fi: FuncInfo, silent: bool = False) -> tuple[BodyChecker, dict[str, tuple]]:
+        """Walk a function's signature and body. Returns the checker (with used effects) and parameter types."""
+        node = fi.node
+        a = node.args
+        all_args = a.posonlyargs + a.args + a.kwonlyargs
+        body = node.body[1:] if fi.docstring is not None else node.body
+        var_types: dict[str, tuple] = {}
+        for arg in all_args:
+            if isinstance(arg.annotation, ast.Name):
+                t = self.type_desc(mod, arg.annotation.id)
+                if t:
+                    var_types[arg.arg] = t
+        checker = BodyChecker(self, mod, fi, set(fi.params) | _bound_names(body), var_types, silent=silent)
+        for arg in all_args:
+            if arg.annotation is not None:
+                checker.visit(arg.annotation)
+        if node.returns is not None:
+            checker.visit(node.returns)
+        for d in a.defaults + [d for d in a.kw_defaults if d is not None]:
+            checker.visit(d)
+        for stmt in body:
+            checker.visit(stmt)
+        return checker, var_types
 
     def _check_contract(self, mod: ModuleInfo, fi: FuncInfo, clause: Clause, var_types: dict[str, tuple], with_result: bool) -> None:
         names = set(fi.params) | ({"result"} if with_result else set())
@@ -678,18 +720,26 @@ class Project:
 class BodyChecker(ast.NodeVisitor):
     """Checks one function body, contract, example, or constant."""
 
-    def __init__(self, project: Project, mod: ModuleInfo, func: FuncInfo | None, local_names: set[str], var_types: dict[str, tuple]) -> None:
+    def __init__(
+        self, project: Project, mod: ModuleInfo, func: FuncInfo | None, local_names: set[str], var_types: dict[str, tuple], silent: bool = False,
+        example_of: FuncInfo | None = None,
+    ) -> None:
         self.p = project
+        self.example_of = example_of
+        self.silent = silent  # inferring effects only: report nothing
         self.mod = mod
         self.func = func
         self.locals = set(local_names)
         self.var_types = dict(var_types)
         self.used_effects: dict[str, list[tuple[int, int, str | None]]] = {}
+        self.names_used: set[str] = set()
         self._chain_seen: set[int] = set()
 
     # -- helpers
 
     def err(self, code: str, msg: str, node: ast.AST, *, severity: str = "error", context: dict | None = None, fix: dict | None = None) -> None:
+        if self.silent:
+            return
         self.p.diag(
             code,
             msg,
@@ -715,8 +765,10 @@ class BodyChecker(ast.NodeVisitor):
             if r and r[0] == "enum":
                 return ("enum_type", r[1], r[2])
             if r and r[0] == "constant":
-                ann = r[1].constants[r[2]].annotation
+                ann = getattr(r[1].constants[r[2]], "annotation", None)
                 return self.p.type_desc(r[1], ann.id) if isinstance(ann, ast.Name) else None
+            if e.id in self.mod.pymods:
+                return ("pymod", self.mod.pymods[e.id][0])
             return None
         if isinstance(e, ast.Attribute):
             base = self.type_of(e.value)
@@ -730,14 +782,23 @@ class BodyChecker(ast.NodeVisitor):
                 return None
             if base[0] == "ctx" and e.attr in std.CTX_PARTS:
                 return ("ctx_part", e.attr)
+            if base[0] == "pymod" and f"{base[1]}.{e.attr}" in std.STDLIB:
+                return ("pymod", f"{base[1]}.{e.attr}")
             return None
         if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id not in self.locals:
             r = self.p.resolve(self.mod, e.func.id)
             if r and r[0] in ("record", "newtype"):
                 return (r[0], r[1], r[2])
+            if r and r[0] == "std" and r[2] in ("Ok", "Err", "Some"):
+                return ("result", "Option" if r[2] == "Some" else "Result")
             if r and r[0] == "function":
                 ret = r[1].functions[r[2]].node.returns
+                if isinstance(ret, ast.Subscript) and isinstance(ret.value, ast.Name) and ret.value.id in ("Result", "Option"):
+                    return ("result", ret.value.id)
                 return self.p.type_desc(r[1], ret.id) if isinstance(ret, ast.Name) else None
+            if r and r[0] == "lib":
+                ret = r[1].returns.get(r[2], "")
+                return ("result", ret.split("[")[0]) if ret.split("[")[0] in ("Result", "Option") else None
             return None
         if isinstance(e, ast.BinOp) and isinstance(e.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod)):
             for side in (self.type_of(e.left), self.type_of(e.right)):
@@ -817,6 +878,7 @@ class BodyChecker(ast.NodeVisitor):
     def visit_Name(self, node: ast.Name) -> None:
         if not isinstance(node.ctx, ast.Load):
             return
+        self.names_used.add(node.id)
         if node.id in self.locals or node.id in std.BUILTINS or node.id in std.INTERNAL:
             return
         if node.id in std.F001_CALLS or node.id in std.F002_CALLS:
@@ -825,15 +887,17 @@ class BodyChecker(ast.NodeVisitor):
             if self.p.resolve(self.mod, node.id) is None and node.id in self.mod.imports:
                 return  # the broken import is reported once, as R003
             return
+        if self.example_of is not None and (imp := self.p.example_import(self.mod, node.id)):
+            self.example_of.example_imports.add(imp)
+            return
         fix = self.p.import_fix(self.mod, node.id)
         candidates: list[str] = []
-        if fix is None:
-            fix, candidates = replace_fix(node.id, self.locals | self.mod.global_names() | std.BUILTINS)
+        if fix is None and self.example_of is not None and node.id == "ctx":
+            fix = {"kind": "replace_token", "from": "ctx", "to": "fixed_ctx()", "confidence": "high"}
+        elif fix is None:
+            # Builtins are not offered as near matches: `ctx` -> `oct` sends models the wrong way.
+            fix, candidates = replace_fix(node.id, self.locals | self.mod.global_names())
         self.err("R001", f"unknown name '{node.id}'", node, context={"candidates": candidates}, fix=fix)
-
-    def visit_Constant(self, node: ast.Constant) -> None:
-        if node.value is None:
-            self.err("F008", "None is not allowed; use Option (Some(x) or Nothing)", node)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if node.attr.startswith("__"):
@@ -869,6 +933,19 @@ class BodyChecker(ast.NodeVisitor):
                         context={"newtype": nt, "base": prim},
                         fix={"kind": "replace_token", "from": f"{ast.unparse(node.value)}.{node.attr}", "to": f"{prim}({ast.unparse(node.value)})", "confidence": "medium"},
                     )
+            elif kind == "result":
+                allowed = std.RESULT_ATTRS if base[1] == "Result" else std.OPTION_ATTRS
+                if node.attr not in allowed:
+                    fix, cands = replace_fix(node.attr, allowed)
+                    self.err(
+                        "R002", f"{base[1]} has no attribute '{node.attr}'; it has {', '.join(sorted(allowed))}, or unwrap with ?",
+                        node, context={"candidates": cands}, fix=fix,
+                    )
+            elif kind == "pymod":
+                module = stdlib_module(base[1])
+                if module is not None and not hasattr(module, node.attr):
+                    fix, cands = replace_fix(node.attr, public_names(module))
+                    self.err("R002", f"module '{base[1]}' has no attribute '{node.attr}'", node, context={"candidates": cands}, fix=fix)
             elif kind == "enum_type":
                 owner, en = base[1], base[2]
                 variants = owner.enums[en]
@@ -902,10 +979,12 @@ class BodyChecker(ast.NodeVisitor):
                 elif r and r[0] == "newtype" and (len(node.args) != 1 or node.keywords):
                     self.err("T006", f"'{name}' takes exactly one positional value", node)
                 elif r and r[0] == "function":
-                    self._check_call(node, r[1].functions[r[2]])
+                    self._check_call(node, r[1], r[1].functions[r[2]])
                 elif r and r[0] == "lib":
                     for eff in sorted(r[1].functions.get(r[2], ())):
                         self.use(eff, node, via=name)
+                    if r[2] in r[1].params:
+                        self._check_arity(node, r[2], r[1].params[r[2]], set(r[1].params[r[2]]))
         self.generic_visit(node)
 
     def _check_record_ctor(self, node: ast.Call, owner: ModuleInfo, rec: str) -> None:
@@ -925,10 +1004,27 @@ class BodyChecker(ast.NodeVisitor):
         if missing and not node.args:
             self.err("T005", f"'{rec}' is missing fields: {', '.join(missing)}", node, context={"missing": missing})
 
-    def _check_call(self, node: ast.Call, callee: FuncInfo) -> None:
+    def _check_arity(self, node: ast.Call, name: str, params: list[str], required: set[str]) -> None:
+        """Argument count and keyword names for a call to a library function."""
+        sig = f"{name}({', '.join(params)})"
+        if len(node.args) > len(params):
+            self.err("T006", f"'{name}' takes {len(params)} arguments, got {len(node.args)}: the signature is {sig}", node)
+            return
+        given = set(params[: len(node.args)])
+        for kw in node.keywords:
+            if kw.arg is not None and kw.arg not in params:
+                fix, cands = replace_fix(kw.arg, params)
+                self.err("R002", f"'{name}' has no parameter '{kw.arg}'; the signature is {sig}", kw.value, context={"candidates": cands}, fix=fix)
+            elif kw.arg is not None:
+                given.add(kw.arg)
+        missing = [p for p in params if p in required and p not in given]
+        if missing and not any(kw.arg is None for kw in node.keywords):
+            self.err("T006", f"'{name}' is missing arguments: {', '.join(missing)}; the signature is {sig}", node)
+
+    def _check_call(self, node: ast.Call, owner: ModuleInfo, callee: FuncInfo) -> None:
         params = callee.params
         if len(node.args) > len(params):
-            self.err("T006", f"'{callee.name}' takes {len(params)} arguments, got {len(node.args)}", node)
+            self.err("T006", f"'{callee.name}' takes {len(params)} arguments, got {len(node.args)}: the signature is {_signature(callee)}", node)
         given = set(params[: len(node.args)])
         for kw in node.keywords:
             if kw.arg is None:
@@ -942,8 +1038,11 @@ class BodyChecker(ast.NodeVisitor):
                 given.add(kw.arg)
         missing = sorted(callee.required - given)
         if missing:
-            self.err("T006", f"'{callee.name}' is missing arguments: {', '.join(missing)}", node, context={"missing": missing})
-        for eff in sorted(callee.effects or ()):
+            self.err(
+                "T006", f"'{callee.name}' is missing arguments: {', '.join(missing)}; the signature is {_signature(callee)}",
+                node, context={"missing": missing},
+            )
+        for eff in sorted(self.p.effects_of(owner, callee)):
             self.use(eff, node, via=callee.name)
 
     # -- newtype mixing
@@ -954,6 +1053,8 @@ class BodyChecker(ast.NodeVisitor):
         if isinstance(e, ast.UnaryOp) and isinstance(e.op, ast.USub):
             return self._nt(e.operand)
         t = self.type_of(e)
+        if t and t[0] == "prim":
+            return "raw"
         return t[2] if t and t[0] == "newtype" else None
 
     def _mix(self, left: ast.expr, right: ast.expr) -> None:

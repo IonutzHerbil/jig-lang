@@ -1,0 +1,39 @@
+module clinic.directory
+
+from clinic.types import ClinicError, Doctor, DoctorId, Minute, Patient, PatientId, Specialty
+from std.result import Err, Ok, Result
+
+DOCTORS: dict[DoctorId, Doctor] = {
+    DoctorId("dr_lee"): Doctor(id=DoctorId("dr_lee"), name="Lee", specialty=Specialty.GENERAL, opens=Minute(540), closes=Minute(720)),
+    DoctorId("dr_khan"): Doctor(id=DoctorId("dr_khan"), name="Khan", specialty=Specialty.GENERAL, opens=Minute(600), closes=Minute(660)),
+    DoctorId("dr_ito"): Doctor(id=DoctorId("dr_ito"), name="Ito", specialty=Specialty.DENTAL, opens=Minute(480), closes=Minute(600)),
+    DoctorId("dr_down"): Doctor(id=DoctorId("dr_down"), name="Down", specialty=Specialty.CARDIO, opens=Minute(540), closes=Minute(1020)),
+}
+
+PATIENTS: dict[PatientId, Patient] = {
+    PatientId("p_ann"): Patient(id=PatientId("p_ann"), name="Ann", phone="+441234"),
+    PatientId("p_bob"): Patient(id=PatientId("p_bob"), name="Bob", phone="0790"),
+}
+
+MIN_LENGTH: int = 10
+MAX_LENGTH: int = 120
+
+
+def find_doctor(doctor: DoctorId) -> Result[Doctor, ClinicError]:
+    """The doctor with this id."""
+    examples:
+        find_doctor(DoctorId("dr_lee")) -> Ok
+        find_doctor(DoctorId("dr_who")) -> Err(ClinicError.UNKNOWN_DOCTOR)
+    if doctor not in DOCTORS:
+        return Err(ClinicError.UNKNOWN_DOCTOR)
+    return Ok(DOCTORS[doctor])
+
+
+def find_patient(patient: PatientId) -> Result[Patient, ClinicError]:
+    """The patient with this id."""
+    examples:
+        find_patient(PatientId("p_ann")) -> Ok
+        find_patient(PatientId("p_zed")) -> Err(ClinicError.UNKNOWN_PATIENT)
+    if patient not in PATIENTS:
+        return Err(ClinicError.UNKNOWN_PATIENT)
+    return Ok(PATIENTS[patient])

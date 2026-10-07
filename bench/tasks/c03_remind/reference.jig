@@ -1,0 +1,20 @@
+module clinic.reminders
+
+from clinic.directory import find_doctor, find_patient
+from clinic.schedule import clock
+from clinic.types import ClinicError, DoctorId, Minute, PatientId
+from lib.sms import send
+from std.result import Err, Ok, Result
+
+
+def remind(doctor: DoctorId, patient: PatientId, start: Minute) -> Result[str, ClinicError]:
+    """Text the patient a reminder; returns the message id."""
+    examples:
+        remind(DoctorId("dr_lee"), PatientId("p_bob"), Minute(570)) -> Err(ClinicError.NOTIFY_FAILED)
+        remind(DoctorId("dr_lee"), PatientId("p_ann"), Minute(570)) -> Ok
+    doc = find_doctor(doctor)?
+    pat = find_patient(patient)?
+    sent = send(pat.phone, f"Hi {pat.name}, your appointment with Dr {doc.name} is at {clock(start)}.")
+    if sent.is_err():
+        return Err(ClinicError.NOTIFY_FAILED)
+    return Ok(sent.value)

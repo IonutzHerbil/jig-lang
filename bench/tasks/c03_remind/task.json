@@ -1,0 +1,11 @@
+{
+  "domain": "project: clinic notifications",
+  "project": "clinic",
+  "module": "clinic.reminders",
+  "entry": "remind",
+  "request": "Add reminders: text a patient a reminder of an appointment through the SMS service, worded exactly 'Hi <patient name>, your appointment with Dr <doctor name> is at <HH:MM>.', and return the message id. An unknown doctor or patient fails as usual (doctor checked first); any SMS failure is NOTIFY_FAILED.",
+  "signature": {
+    "python": "def remind(doctor: DoctorId, patient: PatientId, start: Minute) -> str  # on failure: raise ClinicFailure(ClinicError.<reason>)",
+    "jig": "def remind(doctor: DoctorId, patient: PatientId, start: Minute) -> Result[str, ClinicError]"
+  }
+}

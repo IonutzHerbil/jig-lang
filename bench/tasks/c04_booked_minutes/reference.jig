@@ -1,0 +1,21 @@
+module clinic.reports
+
+from clinic.directory import DOCTORS
+from clinic.types import ClinicError, DoctorId, Specialty
+from lib.calendar import bookings_for
+from std.result import Err, Ok, Result
+
+
+def booked_minutes(specialty: Specialty) -> Result[dict[DoctorId, int], ClinicError]:
+    """Booked minutes per doctor of a specialty."""
+    examples:
+        booked_minutes(Specialty.DENTAL) -> Ok({DoctorId("dr_ito"): 120})
+        booked_minutes(Specialty.CARDIO) -> Err(ClinicError.CALENDAR_DOWN)
+    report: dict[DoctorId, int] = {}
+    for doc in DOCTORS.values():
+        if doc.specialty == specialty:
+            slots = bookings_for(str(doc.id))
+            if slots.is_err():
+                return Err(ClinicError.CALENDAR_DOWN)
+            report[doc.id] = sum([s.length for s in slots.value])
+    return Ok(report)

@@ -85,6 +85,18 @@ class Ok(Generic[T]):
     def is_err(self) -> bool:
         return False
 
+    def map(self, f: Callable[[T], Any]) -> Ok[Any]:
+        return Ok(f(self.value))
+
+    def map_err(self, f: Callable[[Any], Any]) -> Ok[T]:
+        return self
+
+    def and_then(self, f: Callable[[T], Any]) -> Any:
+        return f(self.value)
+
+    def unwrap_or(self, default: Any) -> T:
+        return self.value
+
     def __repr__(self) -> str:
         return f"Ok({self.value!r})"
 
@@ -98,6 +110,18 @@ class Err(Generic[E]):
 
     def is_err(self) -> bool:
         return True
+
+    def map(self, f: Callable[[Any], Any]) -> Err[E]:
+        return self
+
+    def map_err(self, f: Callable[[E], Any]) -> Err[Any]:
+        return Err(f(self.error))
+
+    def and_then(self, f: Callable[[Any], Any]) -> Err[E]:
+        return self
+
+    def unwrap_or(self, default: Any) -> Any:
+        return default
 
     def __repr__(self) -> str:
         return f"Err({self.error!r})"
@@ -123,6 +147,15 @@ class Some(Generic[T]):
     def is_nothing(self) -> bool:
         return False
 
+    def map(self, f: Callable[[T], Any]) -> Some[Any]:
+        return Some(f(self.value))
+
+    def and_then(self, f: Callable[[T], Any]) -> Any:
+        return f(self.value)
+
+    def unwrap_or(self, default: Any) -> T:
+        return self.value
+
     def __repr__(self) -> str:
         return f"Some({self.value!r})"
 
@@ -140,6 +173,15 @@ class _NothingType:
 
     def is_nothing(self) -> bool:
         return True
+
+    def map(self, f: Callable[[Any], Any]) -> _NothingType:
+        return self
+
+    def and_then(self, f: Callable[[Any], Any]) -> _NothingType:
+        return self
+
+    def unwrap_or(self, default: Any) -> Any:
+        return default
 
     def __repr__(self) -> str:
         return "Nothing"

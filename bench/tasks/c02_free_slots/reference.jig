@@ -1,0 +1,27 @@
+module clinic.availability
+
+from clinic.directory import MAX_LENGTH, MIN_LENGTH, find_doctor
+from clinic.schedule import clock, overlaps
+from clinic.types import ClinicError, DoctorId, Minute
+from lib.calendar import bookings_for
+from std.result import Err, Ok, Result
+
+
+def free_slots(doctor: DoctorId, length: int) -> Result[list[str], ClinicError]:
+    """Quarter-hour starts where a booking of this length fits."""
+    examples:
+        free_slots(DoctorId("dr_khan"), 60) -> Ok(["10:00"])
+        free_slots(DoctorId("dr_down"), 30) -> Err(ClinicError.CALENDAR_DOWN)
+    doc = find_doctor(doctor)?
+    if length < MIN_LENGTH:
+        return Err(ClinicError.TOO_SHORT)
+    if length > MAX_LENGTH:
+        return Err(ClinicError.TOO_LONG)
+    booked = bookings_for(str(doctor))
+    if booked.is_err():
+        return Err(ClinicError.CALENDAR_DOWN)
+    out: list[str] = []
+    for start in range(int(doc.opens), int(doc.closes) - length + 1, 15):
+        if not any([overlaps(Minute(start), length, Minute(b.start), b.length) for b in booked.value]):
+            out.append(clock(Minute(start)))
+    return Ok(out)

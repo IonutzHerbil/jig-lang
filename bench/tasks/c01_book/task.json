@@ -1,0 +1,11 @@
+{
+  "domain": "project: clinic booking",
+  "project": "clinic",
+  "module": "clinic.booking",
+  "entry": "book",
+  "request": "Add booking: book a patient with a doctor at a start time for a length in minutes, and return the calendar's slot reference. Check in this order: the doctor exists (UNKNOWN_DOCTOR), the patient exists (UNKNOWN_PATIENT), the length is between MIN_LENGTH and MAX_LENGTH minutes inclusive (TOO_SHORT or TOO_LONG), and the whole appointment lies within the doctor's opening hours (OUTSIDE_HOURS). Then reserve it in the calendar: a calendar conflict is SLOT_TAKEN and an unavailable calendar is CALENDAR_DOWN.",
+  "signature": {
+    "python": "def book(doctor: DoctorId, patient: PatientId, start: Minute, length: int) -> SlotRef  # on failure: raise ClinicFailure(ClinicError.<reason>)",
+    "jig": "def book(doctor: DoctorId, patient: PatientId, start: Minute, length: int) -> Result[SlotRef, ClinicError]"
+  }
+}

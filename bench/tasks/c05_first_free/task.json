@@ -1,0 +1,11 @@
+{
+  "domain": "project: clinic matching",
+  "project": "clinic",
+  "module": "clinic.matching",
+  "entry": "first_free",
+  "request": "Add matching: find the earliest time any doctor of a specialty can take a booking of `length` minutes (quarter-hour starts from opening time, ending by closing time, not overlapping existing calendar bookings). Return '<doctor id> <HH:MM>'; when several doctors are free at the same earliest time, pick the doctor id that sorts first. Check the length first, as for booking (TOO_SHORT or TOO_LONG). Skip doctors whose calendar is unavailable. Fail with NOT_FOUND if nobody can take it.",
+  "signature": {
+    "python": "def first_free(specialty: Specialty, length: int) -> str  # on failure: raise ClinicFailure(ClinicError.<reason>)",
+    "jig": "def first_free(specialty: Specialty, length: int) -> Result[str, ClinicError]"
+  }
+}

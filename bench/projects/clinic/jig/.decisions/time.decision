@@ -1,0 +1,9 @@
+decision time
+
+context: Appointments, opening hours and calendar slots all handle times of day
+decision: A time of day is Minute(int), minutes since midnight; durations are plain int minutes
+rationale: One unit avoids hour/minute mix-ups; the calendar library speaks plain ints, converted with int(m)
+enforcement: Minute is Minute(int); show times with clinic.schedule.clock
+examples:
+    ✓ type Minute = Minute(int)
+    ✗ type Minute = Minute(str)

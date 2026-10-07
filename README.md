@@ -1,13 +1,13 @@
-# Jig v0.1
+# Jig v0.2
 
-A Python-shaped language where a human describes what they want, an LLM writes the code,
-and the checker verifies it. Named after the woodworking jig: a guide that makes every cut
+Python plus guarantees: a human describes what they want, an LLM writes the code, and the
+checker verifies it. Correct, idiomatic Python is valid Jig. Named after the woodworking jig: a guide that makes every cut
 come out the same.
 
 The human's side is intent: signatures, docstrings, contracts, examples, and project-level
 ground truth (library manifests, recorded decisions, canonical patterns). The model's side
 is everything else. The checker is what makes that safe: any Jig program that passes `jig check` has no invented names, fields, variants,
-imports, or effects, and every function has passed its own examples.
+imports, library or standard-library APIs, no newtype mix-ups, and no undeclared effects; its examples pass.
 It transpiles to plain Python 3.12+ with zero dependencies.
 
 ## Quick start
@@ -20,7 +20,7 @@ jig interface examples/shop            # the low-context view for agents
 jig run examples/shop --entry shop.app.main
 jig build examples/shop -o build/      # plain Python package
 jig fmt examples/                      # canonical formatting
-jig fix examples/                      # mechanical fixes: format, drop free-text comments, if-chains to match
+jig fix examples/shop                  # mechanical fixes: format, if-chains to match, missing imports
 ```
 
 `jig check` prints JSON by default. Add `--pretty` for humans, or `--for-model` for the compact
@@ -66,17 +66,21 @@ def charge(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
     return Ok(replace(customer, balance=customer.balance - amount))
 ```
 
-## Implemented in v0.1
+## Implemented in v0.2
+
+Jig is Python plus guarantees: correct, idiomatic Python is valid Jig, and every rule has to catch more
+bugs than it costs (measured with `bench/`).
 
 | Area | What is checked | Codes |
 | --- | --- | --- |
-| Structure | `module` header, docstring, `effects` and `examples` required, clause order, naming | S001-S008 |
-| Resolution | unknown names, record fields, enum variants, Ctx methods, parameters, imports, with nearest-match fixes | R001-R003 |
-| Types | mandatory annotations, newtype mixing (`Money` vs raw numbers), record construction, arity, exhaustive `match` on enums and Result, `?` placement | T001-T007 |
-| Effects | undeclared effects (direct and through callees), unknown effects, impure contracts and constants, unused effects | E001-E004, W001 |
-| Contracts | `requires`/`ensures` enforced at runtime, examples run on every check, Err and `rejected` coverage | C001-C005 |
-| Forbidden | `eval`, `getattr`, classes, decorators, `import x`, aliases, re-exports, exceptions, `None`, `while`, globals, `*args`, mutable defaults, nested functions, free-text comments | F001-F016 |
-| Determinism | canonical formatting, `match` over long if/elif chains, fixed hash seed and fixed `Ctx` in examples | D001, D003 |
+| Structure | `module` header, clause order, naming | S001-S008 |
+| Resolution | unknown names, record fields, enum variants, Ctx methods, parameters, project / `std` / `lib.*` imports, and standard-library modules and APIs checked against the real module, with nearest-match fixes | R001-R003 |
+| Types | newtype mixing (`Money` vs raw numbers), record construction, arity, exhaustive `match` on enums and Result, `?` placement; missing annotations warn | T001-T007 |
+| Effects | inferred for every function and carried through calls; a declared `effects:` is enforced; effectful stdlib modules point to `ctx` or a manifest | E001-E004, W001 |
+| Contracts | optional `requires`/`ensures` enforced at runtime, optional examples run on every check | C001, C003, C005 |
+| Edge probes | `jig probe` runs pure functions on boundary inputs so spec misreadings show | - |
+| Forbidden | only what breaks a guarantee: `eval`, `getattr`, classes, decorators, re-exports, globals, `*args`, mutable defaults, async, generators, `with` | F001-F014 |
+| Determinism | canonical formatting, `match` over long if/elif chains (both fixed by `jig fix`), fixed hash seed and fixed `Ctx` in examples | D001, D003 |
 | Project files | `lib/*.manifest` exports and effects, `.decisions/*.decision` newtype rules | M001-M003, DEC001-DEC002 |
 
 Full reference: [LANGUAGE.md](LANGUAGE.md). Every code: [ERROR_CODES.md](ERROR_CODES.md).
@@ -89,11 +93,11 @@ Full reference: [LANGUAGE.md](LANGUAGE.md). Every code: [ERROR_CODES.md](ERROR_C
 - `Result[T, E]` with `Ok`/`Err`, `Option[T]` with `Some`/`Nothing`, `expr?` to propagate
 - `Ctx` is the only source of time (`ctx.clock`), randomness (`ctx.random`) and logging (`ctx.log`);
   examples use `fixed_ctx(t=..., seed=...)`
-- Comments are only allowed as `# why: ...`
+- Everything else is Python: `while`, `try`/`except`, `None`, comments, the pure standard library
 
 ## Not yet implemented
 
-Checking argument types of `lib.*` calls, enforcing `.pattern` files, `@endpoint`/`@store`/`@job`,
+Checking argument types (not just counts and names) of `lib.*` calls, enforcing `.pattern` files, `@endpoint`/`@store`/`@job`,
 flow-sensitive type inference, the generation cache, constrained decoding, `jig serve` (MCP),
 `jig spec`, and the Sentry integration.
 Attribute checks apply when the checker knows the value's type (parameters, records, constants,

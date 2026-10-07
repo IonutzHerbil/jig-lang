@@ -1,0 +1,11 @@
+{
+  "domain": "project: clinic availability",
+  "project": "clinic",
+  "module": "clinic.availability",
+  "entry": "free_slots",
+  "request": "Add availability: list the start times, written HH:MM, at which a booking of `length` minutes could be made with a doctor: every quarter hour from the doctor's opening time, keeping only starts where the whole booking ends by closing time and does not overlap any existing calendar booking. Check the doctor first (UNKNOWN_DOCTOR), then the length as for booking (TOO_SHORT or TOO_LONG), then the calendar (CALENDAR_DOWN if it is unavailable).",
+  "signature": {
+    "python": "def free_slots(doctor: DoctorId, length: int) -> list[str]  # on failure: raise ClinicFailure(ClinicError.<reason>)",
+    "jig": "def free_slots(doctor: DoctorId, length: int) -> Result[list[str], ClinicError]"
+  }
+}

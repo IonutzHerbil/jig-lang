@@ -10,12 +10,13 @@ ALICE: Customer = Customer(id=UserId(1), email="alice@example.com", balance=Mone
 def charge(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
     """Deduct an amount from a customer's balance."""
     effects: none
-    requires: amount > Money(0)
     ensures: result.is_err() or result.value.balance >= Money(0)
     examples:
         charge(ALICE, Money(300)) -> Ok(replace(ALICE, balance=Money(700)))
         charge(ALICE, Money(5000)) -> Err(PaymentError.INSUFFICIENT_FUNDS)
-        charge(ALICE, Money(0)) -> rejected
+        charge(ALICE, Money(0)) -> Err(PaymentError.INVALID_AMOUNT)
+    if amount <= Money(0):
+        return Err(PaymentError.INVALID_AMOUNT)
     if customer.balance < amount:
         return Err(PaymentError.INSUFFICIENT_FUNDS)
     return Ok(replace(customer, balance=customer.balance - amount))
@@ -24,11 +25,10 @@ def charge(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
 def charge_twice(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
     """Charge the same amount twice, stopping at the first failure."""
     effects: none
-    requires: amount > Money(0)
     examples:
         charge_twice(ALICE, Money(400)) -> Ok(replace(ALICE, balance=Money(200)))
         charge_twice(ALICE, Money(600)) -> Err(PaymentError.INSUFFICIENT_FUNDS)
-        charge_twice(ALICE, Money(0)) -> rejected
+        charge_twice(ALICE, Money(0)) -> Err(PaymentError.INVALID_AMOUNT)
     once = charge(customer, amount)?
     return charge(once, amount)
 

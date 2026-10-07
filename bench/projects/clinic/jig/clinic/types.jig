@@ -1,0 +1,33 @@
+module clinic.types
+
+type Minute = Minute(int)
+type DoctorId = DoctorId(str)
+type PatientId = PatientId(str)
+
+enum Specialty:
+    GENERAL
+    DENTAL
+    CARDIO
+
+enum ClinicError:
+    UNKNOWN_DOCTOR
+    UNKNOWN_PATIENT
+    TOO_SHORT
+    TOO_LONG
+    OUTSIDE_HOURS
+    SLOT_TAKEN
+    CALENDAR_DOWN
+    NOTIFY_FAILED
+    NOT_FOUND
+
+record Doctor:
+    id: DoctorId
+    name: str
+    specialty: Specialty
+    opens: Minute
+    closes: Minute
+
+record Patient:
+    id: PatientId
+    name: str
+    phone: str

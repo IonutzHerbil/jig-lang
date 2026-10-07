@@ -1,0 +1,27 @@
+module clinic.booking
+
+from clinic.directory import MAX_LENGTH, MIN_LENGTH, find_doctor, find_patient
+from clinic.types import ClinicError, DoctorId, Minute, PatientId
+from lib.calendar import CalendarError, SlotRef, reserve
+from std.result import Err, Ok, Result
+
+
+def book(doctor: DoctorId, patient: PatientId, start: Minute, length: int) -> Result[SlotRef, ClinicError]:
+    """Book a patient with a doctor and reserve the slot in the calendar."""
+    examples:
+        book(DoctorId("dr_lee"), PatientId("p_ann"), Minute(570), 30) -> Ok(SlotRef("dr_lee@570"))
+        book(DoctorId("dr_lee"), PatientId("p_ann"), Minute(555), 30) -> Err(ClinicError.SLOT_TAKEN)
+    doc = find_doctor(doctor)?
+    find_patient(patient)?
+    if length < MIN_LENGTH:
+        return Err(ClinicError.TOO_SHORT)
+    if length > MAX_LENGTH:
+        return Err(ClinicError.TOO_LONG)
+    if start < doc.opens or start + Minute(length) > doc.closes:
+        return Err(ClinicError.OUTSIDE_HOURS)
+    reserved = reserve(str(doctor), int(start), length)
+    if reserved.is_ok():
+        return Ok(reserved.value)
+    if reserved.error == CalendarError.CONFLICT:
+        return Err(ClinicError.SLOT_TAKEN)
+    return Err(ClinicError.CALENDAR_DOWN)

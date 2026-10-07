@@ -1,4 +1,4 @@
-"""jig command line: check, fmt, fix, build, interface, run. JSON by default."""
+"""jig command line: do, check, fmt, fix, probe, build, interface, run. JSON by default."""
 
 from __future__ import annotations
 
@@ -13,9 +13,11 @@ from typing import Any
 from .checker import Project
 from .diagnostics import render_for_model
 from .examples import run_examples
+from .autoimport import fix_imports
 from .fixer import fix_source
 from .formatter import first_difference, format_source
 from .interface import render_interface
+from .probes import render_probes, run_probes
 from .transpiler import build
 
 
@@ -33,8 +35,8 @@ def discover(paths: list[str]) -> list[Path]:
     return files
 
 
-def check_project(paths: list[str], run_ex: bool = True, allow_comments: bool = False) -> tuple[Project, dict[str, Any]]:
-    project = Project(allow_comments=allow_comments)
+def check_project(paths: list[str], run_ex: bool = True) -> tuple[Project, dict[str, Any]]:
+    project = Project()
     project.load(discover(paths))
     total = passed = 0
     if run_ex and not project.has_errors:
@@ -91,14 +93,16 @@ def cmd_fmt(args: argparse.Namespace) -> int:
 
 def cmd_fix(args: argparse.Namespace) -> int:
     changed = []
-    for path in discover(args.paths):
+    files = discover(args.paths)
+    for path in files:
         text = path.read_text(encoding="utf-8")
         fixed, applied = fix_source(text)
         if fixed != text:
             changed.append({"file": str(path), "line": first_difference(text, fixed), "applied": applied})
             if not args.check:
                 path.write_text(fixed, encoding="utf-8")
-    print(json.dumps({"check": args.check, "changed": changed}, indent=2))
+    imports = fix_imports(files) if not args.check else {}
+    print(json.dumps({"check": args.check, "changed": changed, "imports": imports}, indent=2))
     return 1 if (args.check and changed) else 0
 
 
@@ -117,8 +121,30 @@ def cmd_interface(args: argparse.Namespace) -> int:
     project.load(discover(args.paths))
     for mod in sorted(project.modules.values(), key=lambda m: m.name):
         if mod.tree is not None:
-            print(render_interface(mod))
+            print(render_interface(mod, project))
     return 0
+
+
+def edge_probes(project: Project) -> str:
+    """What each pure function returns on boundary inputs, for comparison with the request."""
+    with tempfile.TemporaryDirectory() as tmp:
+        build(project, Path(tmp), fakes=True)
+        return render_probes(run_probes(project, Path(tmp)))
+
+
+def cmd_probe(args: argparse.Namespace) -> int:
+    project, summary = check_project(args.paths, run_ex=False)
+    if not summary["ok"]:
+        print(feedback_for_model(project))
+        return 1
+    print(edge_probes(project) or "no probe-able functions")
+    return 0
+
+
+def cmd_do(args: argparse.Namespace) -> int:
+    from .do import main as do_main
+
+    return do_main(args.request, args.project, args.model, args.rounds, args.yes)
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -160,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--check", action="store_true", help="fail instead of rewriting")
     p.set_defaults(func=cmd_fmt)
 
-    p = sub.add_parser("fix", help="apply mechanical fixes: format, drop free-text comments, if-chains to match")
+    p = sub.add_parser("fix", help="apply mechanical fixes: format, if-chains to match, missing imports")
     p.add_argument("paths", nargs="+")
     p.add_argument("--check", action="store_true", help="fail instead of rewriting")
     p.set_defaults(func=cmd_fix)
@@ -173,6 +199,18 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("interface", help="print the interface view (no bodies)")
     p.add_argument("paths", nargs="+")
     p.set_defaults(func=cmd_interface)
+
+    p = sub.add_parser("do", help="implement a feature request with an LLM, verified before it is applied")
+    p.add_argument("request", help='what you want, e.g. "add loyalty points: 1 per 100 cents spent"')
+    p.add_argument("--project", help="project directory (default: current directory)")
+    p.add_argument("--model", default="gemini-flash-latest", help="Gemini model id")
+    p.add_argument("--rounds", type=int, default=5, help="max attempts including repairs")
+    p.add_argument("--yes", action="store_true", help="apply without asking once the checks pass")
+    p.set_defaults(func=cmd_do)
+
+    p = sub.add_parser("probe", help="show what each pure function returns on edge-case inputs")
+    p.add_argument("paths", nargs="+")
+    p.set_defaults(func=cmd_probe)
 
     p = sub.add_parser("run", help="check, build, and call an entry function")
     p.add_argument("paths", nargs="+")

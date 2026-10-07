@@ -1,0 +1,11 @@
+{
+  "domain": "project: clinic reports",
+  "project": "clinic",
+  "module": "clinic.reports",
+  "entry": "booked_minutes",
+  "request": "Add a load report: for every doctor of a specialty, how many minutes they are booked today according to the calendar, keyed by doctor id. If the calendar is unavailable for any of them, fail with CALENDAR_DOWN.",
+  "signature": {
+    "python": "def booked_minutes(specialty: Specialty) -> dict[DoctorId, int]  # on failure: raise ClinicFailure(ClinicError.<reason>)",
+    "jig": "def booked_minutes(specialty: Specialty) -> Result[dict[DoctorId, int], ClinicError]"
+  }
+}

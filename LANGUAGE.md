@@ -1,9 +1,10 @@
-# Jig Language Reference v0.1
+# Jig Language Reference v0.2
 
-Jig code is written by an LLM from a human's intent and checked mechanically.
-A program that passes `jig check` has no invented names, fields, variants, imports,
-or effects, and every function has run its own examples. It transpiles to plain
-Python 3.12+ with zero dependencies.
+Jig is Python plus guarantees. Correct, idiomatic Python 3.12 is valid Jig; Jig adds checks on top and never
+takes a Python feature away unless it breaks a guarantee. Code is written by an LLM from a human's intent and
+checked mechanically: a program that passes `jig check` has no invented names, fields, variants, imports,
+library functions, or standard-library APIs, no newtype mix-ups, and no undeclared side effects. It
+transpiles to plain Python with zero dependencies.
 
 Error codes are listed in [ERROR_CODES.md](ERROR_CODES.md).
 
@@ -12,111 +13,75 @@ Error codes are listed in [ERROR_CODES.md](ERROR_CODES.md).
 ```python
 module shop.billing
 
+import re
+from collections import Counter
+
 from shop.types import Customer, Money
 from std.result import Err, Ok, Result
 ```
 
-- Every file starts with `module <dotted.name>`, one module per file.
-- Only `from X import Y`, at the top, no aliases, no relative or star imports.
-- Import from other project modules, `std.*`, or `lib.*` (declared by a manifest).
-- Import a name from the module that declares it, not one that re-exports it.
-
-## Types
-
-**Primitives:** `int`, `float`, `str`, `bytes`, `bool`.
-**Collections:** `list[T]`, `dict[K, V]`, `set[T]`, `tuple[A, B]`, freely nested.
-
-### Newtypes
-
-```python
-type Money = Money(int)
-type UserId = UserId(str)
-```
-
-A distinct type over a primitive. Mixing `Money` with `UserId`, or with a plain number,
-is rejected by the checker (T002) and at runtime. Newtypes support `+`, `-` and
-comparisons with the same newtype; `int`/`float` newtypes can also be scaled by a
-plain `int` (`*`, `//`) and negated. A newtype has its base type's methods and nothing
-else; unwrap it with the base type: `int(amount)`, not `amount.value` (R002).
-
-### Records
-
-```python
-record Customer:
-    id: UserId
-    email: str
-    balance: Money
-```
-
-Immutable, built with keyword arguments only: `Customer(id=..., email=..., balance=...)`.
-Copy with changes via `replace(customer, balance=Money(500))` from `std.record`.
-
-### Enums
-
-```python
-enum PaymentError:
-    INSUFFICIENT_FUNDS
-    INVALID_AMOUNT
-```
-
-Variants are `UPPER_CASE` and carry no data. A `match` over an enum must cover every
-variant or have a `case _:`.
-
-### Result and Option
-
-```python
-def divide(a: int, b: int) -> Result[int, str]:
-    """Divide two numbers."""
-    effects: none
-    examples:
-        divide(10, 2) -> Ok(5)
-        divide(10, 0) -> Err("division by zero")
-    if b == 0:
-        return Err("division by zero")
-    return Ok(a // b)
-```
-
-- `Result[T, E]` is `Ok(value)` or `Err(error)`; `.is_ok()`, `.is_err()`, `.value`, `.error`.
-- `Option[T]` is `Some(value)` or `Nothing`; `.is_some()`, `.is_nothing()`, `.value`.
-- `expr?` unwraps an `Ok`/`Some`, or returns the `Err`/`Nothing` from the enclosing
-  function. Only valid in functions returning `Result` or `Option`.
+- Every file starts with `module <dotted.name>`, one module per file. Imports go at the top.
+- Import from other project modules, `std.*`, `lib.*` (declared by a manifest), or the pure Python standard
+  library: `re`, `math`, `collections`, `itertools`, `functools`, `operator`, `heapq`, `bisect`, `string`,
+  `textwrap`, `json`, `csv`, `decimal`, `fractions`, `statistics`, `typing`, `dataclasses`, `enum`, `difflib`,
+  `unicodedata`, `hashlib`, `base64`, `copy`, `html`, `urllib.parse`, and similar. Every name you use from them
+  is checked against the real module.
+- Modules with effects are not imported directly: randomness and time come from `ctx: Ctx`
+  (`ctx.random`, `ctx.clock`), files, network and processes from a `lib/<name>.manifest`.
+- `import x`, `import x as y` and `from x import y as z` all work. No relative or star imports.
 
 ## Functions
+
+Write functions as in Python. Type hints on parameters and returns are expected (missing ones are a
+warning: they are what lets Jig check your callers). Optionally, between the docstring and the body:
 
 ```python
 def charge(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
     """Deduct an amount from a customer's balance."""
     effects: none
-    requires: amount > Money(0)
     ensures: result.is_err() or result.value.balance >= Money(0)
     examples:
         charge(ALICE, Money(300)) -> Ok(replace(ALICE, balance=Money(700)))
         charge(ALICE, Money(5000)) -> Err(PaymentError.INSUFFICIENT_FUNDS)
-        charge(ALICE, Money(0)) -> rejected
+        charge(ALICE, Money(0)) -> Err(PaymentError.INVALID_AMOUNT)
+    if amount <= Money(0):
+        return Err(PaymentError.INVALID_AMOUNT)
     if customer.balance < amount:
         return Err(PaymentError.INSUFFICIENT_FUNDS)
     return Ok(replace(customer, balance=customer.balance - amount))
+
+
+def percent_of(amount: Money, percent: int) -> Money:
+    """percent% of amount, rounded down."""
+    requires: 0 <= percent <= 100
+    examples:
+        percent_of(Money(999), 10) -> Money(99)
+        percent_of(Money(999), 101) -> rejected
+    return amount * percent // 100
 ```
 
-Between the signature and the body: a docstring, `effects:`, and `examples:` (required),
-plus any number of `requires:` and `ensures:`. Every parameter and the return value need
-a type. Functions are `snake_case`, top level only.
+All of these are optional. When present they are checked:
+
+- `effects:` asserts what the function may do; using anything else is an error. Without it, effects are
+  inferred from the body and shown by `jig interface`.
+- `requires:` states what callers must never pass; a violation crashes. Bad input a caller may legitimately
+  send is a result, not a crash: a function returning `Result` reports it with `return Err(...)` and cannot
+  use `requires` (C006). `ensures:` is checked after every call (`result` is the return value). Both must be pure.
+- `examples:` run on every `jig check`. The expected side is a value, bare `Ok`/`Err` (any value of that kind),
+  or `rejected` (a `requires` clause refuses the call). Examples may use any name declared exactly once in the
+  project, `std`, or a manifest without the module importing it.
+
+Nested helper functions, `lambda`, `while`, `try`/`except`, `raise`, `None`, `del` and comments all work as in
+Python.
 
 ### Effects
 
-```python
-effects: none
-effects: time, random
-effects: db.write, net
-```
+Known effects: `log`, `time`, `random`, `net`, `env`, `db` (`db.read`, `db.write`), `fs` (`fs.read`,
+`fs.write`). A function uses an effect by touching a `Ctx` capability, calling `print` (`log`), or calling any
+function that has it, including a `lib.*` function. Effects travel through calls whether declared or inferred,
+so a function that says `effects: none` cannot secretly log, read the clock, or hit the network.
 
-Known effects: `log`, `time`, `random`, `net`, `env`, `db` (`db.read`, `db.write`),
-`fs` (`fs.read`, `fs.write`). `db` covers `db.read` and `db.write`. An effect is used by
-touching a `Ctx` capability, calling `print` (`log`), or calling any function, including
-a `lib.*` function, that has it. Every used effect must be declared (E001, E002);
-declared but unused effects are a warning (W001).
-
-`Ctx` is the only door to time, randomness, and logging:
+`Ctx` is the door to time, randomness, and logging:
 
 | Call | Effect |
 | --- | --- |
@@ -127,60 +92,83 @@ declared but unused effects are a warning (W001).
 
 Examples pass `fixed_ctx(t=..., seed=...)` so time and randomness are deterministic.
 
-### Contracts
+## Types
 
-`requires:` clauses are checked before the body runs, `ensures:` clauses after it, with
-`result` bound to the return value. A failure raises `ContractViolation` naming the clause.
-Contracts must be pure (E004).
+**Primitives:** `int`, `float`, `str`, `bytes`, `bool`, and `None`.
+**Collections:** `list[T]`, `dict[K, V]`, `set[T]`, `tuple[A, B]`, `X | None`, freely nested.
 
-### Examples
+### Newtypes
 
 ```python
-examples:
-    add(2, 3) -> 5
-    divide(10, 0) -> Err("division by zero")
-    parse("x") -> Err
-    charge(ALICE, Money(0)) -> rejected
+type Money = Money(int)
+type UserId = UserId(str)
 ```
 
-The expected side is a value, bare `Ok` or `Err` (any value of that kind), or
-`rejected` (a `requires` clause must refuse the call). Examples run against the
-transpiled program on every `jig check`, with `PYTHONHASHSEED=0`. A function returning
-`Result` needs a failure example (C002); a function with `requires` should have a
-`rejected` example (C004).
+A distinct type over a primitive. Mixing `Money` with `UserId`, or with a plain number, is rejected by the
+checker (T002) and at runtime. Newtypes support `+`, `-` and comparisons with the same newtype; `int`/`float`
+newtypes can also be scaled by a plain `int` (`*`, `//`) and negated. A newtype has its base type's methods
+and nothing else; unwrap it with the base type: `int(amount)`, not `amount.value` (R002).
+
+### Records
+
+```python
+record Customer:
+    id: UserId
+    email: str
+    balance: Money
+```
+
+Immutable, built with keyword arguments only: `Customer(id=..., email=..., balance=...)`. Every field access
+and constructor argument is checked. Copy with changes via `replace(customer, balance=Money(500))` from
+`std.record`.
+
+### Enums
+
+```python
+enum PaymentError:
+    INSUFFICIENT_FUNDS
+    INVALID_AMOUNT
+```
+
+Variants are `UPPER_CASE`. A `match` over an enum must cover every variant or have a `case _:` (T003).
+
+### Result and Option
+
+`Result[T, E]` is `Ok(value)` or `Err(error)`, with `.is_ok()`, `.is_err()`, `.value`, `.error`, `.map(f)`,
+`.map_err(f)`, `.and_then(f)` and `.unwrap_or(default)`. `Option[T]` is `Some(value)` or `Nothing`, with
+`.is_some()`, `.is_nothing()`, `.value`, `.map(f)`, `.and_then(f)` and `.unwrap_or(default)`. Any other
+attribute (`unwrap`, `ok`, ...) is R002. `expr?` unwraps an `Ok`/`Some`, or returns the `Err`/`Nothing` from the enclosing
+function. Use them for failures callers should handle; exceptions remain available as in Python.
 
 ## Constants
 
 ```python
+VALUES = {"I": 1, "V": 5}
 ALICE: Customer = Customer(id=UserId("u1"), email="alice@example.com", balance=Money(1000))
-MAX_RETRY: int = 3
 ```
 
-`UPPER_CASE`, annotated, pure. Usable from functions and examples.
+Module-level names are constants: `UPPER_CASE`, pure, never reassigned. An annotation lets Jig check their uses.
 
 ## One way to write it
 
-An `if`/`elif` chain of three or more branches that compares one subject to constants
-(`x == "a"`, `x == Color.RED`) must be a `match` (D003). Files must be in `jig fmt` form (D001).
-`jig fix` applies both, and removes free-text comments (F016), without changing behavior.
+An `if`/`elif` chain of three or more branches that compares one subject to constants (`x == "a"`,
+`x == Color.RED`) must be a `match` (D003); files must be in `jig fmt` form (D001). `jig fix` does both
+automatically, without changing behavior, and also adds imports for names declared exactly once in the
+project, `std`, or a manifest, and corrects a module path when only one module matches (`payments` ->
+`lib.payments`).
 
-## Comments
+## Not allowed
 
-Only `# why: ...` comments are allowed. Behaviour belongs in docstrings and contracts.
-
-## Forbidden
-
-`None`, `while`, `raise`/`try`, `class`, decorators, `global`/`nonlocal`, `*args`/`**kwargs`,
-mutable defaults, nested functions, `eval`/`exec`, `getattr` and friends, dunder attributes,
-async, generators, `with`, and `del`. See ERROR_CODES.md for the code and replacement of each.
-
-Python builtins available: `int float bool str bytes list dict set tuple len range min max
-sum abs sorted reversed enumerate zip all any round print isinstance map filter`.
+Only what breaks a guarantee: `eval`/`exec`, `getattr` and friends, dunder attributes (they dodge the
+closed world); `global`/`nonlocal` and mutable default arguments (hidden shared state); `class` (use `record`
+and `enum` for data, functions for behavior); and, not supported yet, `async`, generators, and `with`.
+All other Python builtins are available, except `open`, `input`, `id` and `hash` (effects or
+non-determinism).
 
 ## Project files
 
-A project directory may hold three kinds of files next to its `.jig` code. `jig check`
-loads them from the nearest ancestor of each `.jig` file that has a `lib/` or `.decisions/`.
+A project directory may hold three kinds of files next to its `.jig` code. `jig check` loads them from the
+nearest ancestor of each `.jig` file that has a `lib/` or `.decisions/`.
 
 ### `lib/<name>.manifest`: external libraries
 
@@ -194,15 +182,15 @@ declare charge(amount: Amount, customer: CustomerId) -> Result[ChargeId, StripeE
     effects: net
 ```
 
-The complete list of what `lib.stripe` exports. Importing anything else is R003, and
-calling `charge` uses the `net` effect. The build turns the manifest's types into Python
-and takes function bodies from plain Python files next to it:
+The complete list of what `lib.stripe` exports. Importing anything else is R003, and calling `charge` uses
+the `net` effect. The build turns the manifest's types into Python and takes function bodies from plain Python
+files next to it:
 
 - `lib/stripe.fake.py`: deterministic stand-ins, used whenever examples run
 - `lib/stripe.py`: the real adapter, used by `jig build` and `jig run`
 
-Both see the manifest's types and `Ok`/`Err`/`Some`/`Nothing` without importing them.
-A declared function missing from the file raises `NotImplementedError` when called.
+Both see the manifest's types and `Ok`/`Err`/`Some`/`Nothing` without importing them. A declared function
+missing from the file raises `NotImplementedError` when called.
 
 ### `.decisions/<id>.decision`: architectural decisions
 
@@ -216,19 +204,10 @@ examples:
     ✗ type Money = Money(float)
 ```
 
-Each `✓` line that declares a newtype is enforced: any newtype with that name must use
-that base (DEC001). Other text is guidance for whoever writes the code.
+Each `✓` line that declares a newtype is enforced: any newtype with that name must use that base (DEC001).
+Other text is guidance for whoever writes the code.
 
 ### `.patterns/<id>.pattern`: canonical implementations
-
-```
-pattern retry-with-backoff
-
-problem: Retrying a failing call
-solution:
-    ...
-anti-pattern: while True with no bound
-```
 
 Reference material for the model writing code. Not checked.
 
@@ -236,9 +215,10 @@ Reference material for the model writing code. Not checked.
 
 | Command | Does |
 | --- | --- |
-| `jig check <paths> [--pretty] [--no-examples]` | all checks, then runs examples; JSON by default; exit 1 on errors |
+| `jig check <paths> [--pretty \| --for-model] [--no-examples]` | all checks, then runs examples; JSON by default; exit 1 on errors |
+| `jig fix <paths> [--check]` | `fmt`, if/elif chains to `match` (D003), missing imports and module paths when unambiguous |
 | `jig fmt <paths> [--check]` | canonical formatting (spaces, no trailing whitespace, sorted imports) |
-| `jig fix <paths> [--check]` | `fmt`, plus the mechanical fixes for F016 and D003 |
-| `jig interface <paths>` | signatures, contracts, and examples without bodies |
+| `jig probe <paths>` | what each pure function returns on edge-case inputs (`""`, `0`, `-1`, `[]`), to compare with the request |
+| `jig interface <paths>` | signatures, effects (declared or inferred), contracts, and examples without bodies |
 | `jig build <paths> -o <dir>` | check, then write a Python package plus `jig_runtime.py` |
 | `jig run <paths> --entry module.function` | check, build, and call the entry with a real `Ctx` if it takes one |

@@ -1,0 +1,8 @@
+[
+{"args": ["D(\"dr_lee\")", "P(\"p_ann\")", "M(9, 30)"], "expect": "msg:+441234:Hi Ann, your appointment with Dr Lee is at 09:30."},
+{"args": ["D(\"dr_khan\")", "P(\"p_ann\")", "M(10, 5)"], "expect": "msg:+441234:Hi Ann, your appointment with Dr Khan is at 10:05."},
+{"args": ["D(\"dr_lee\")", "P(\"p_bob\")", "M(9, 30)"], "expect": "error:NOTIFY_FAILED"},
+{"args": ["D(\"dr_who\")", "P(\"p_ann\")", "M(9, 30)"], "expect": "error:UNKNOWN_DOCTOR"},
+{"args": ["D(\"dr_lee\")", "P(\"p_zed\")", "M(9, 30)"], "expect": "error:UNKNOWN_PATIENT"},
+{"args": ["D(\"dr_who\")", "P(\"p_zed\")", "M(9, 30)"], "expect": "error:UNKNOWN_DOCTOR"}
+]

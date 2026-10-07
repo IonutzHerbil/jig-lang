@@ -1,0 +1,10 @@
+[
+{"args": ["D(\"dr_lee\")", "30"], "expect": ["09:30", "11:00", "11:15", "11:30"]},
+{"args": ["D(\"dr_khan\")", "60"], "expect": ["10:00"]},
+{"args": ["D(\"dr_ito\")", "15"], "expect": []},
+{"args": ["D(\"dr_down\")", "30"], "expect": "error:CALENDAR_DOWN"},
+{"args": ["D(\"dr_who\")", "30"], "expect": "error:UNKNOWN_DOCTOR"},
+{"args": ["D(\"dr_lee\")", "5"], "expect": "error:TOO_SHORT"},
+{"args": ["D(\"dr_khan\")", "15"], "expect": ["10:00", "10:15", "10:30", "10:45"]},
+{"args": ["D(\"dr_down\")", "200"], "expect": "error:TOO_LONG"}
+]

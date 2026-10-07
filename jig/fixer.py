@@ -1,7 +1,6 @@
 """Mechanical fixes: rewrites that cannot change behavior, applied by the tool instead of the model.
 
 - formatting (as `jig fmt`)
-- F016: free-text comments are removed; `# why:` comments stay
 - D003: an if/elif chain comparing one subject to constants becomes a `match`
 
 Anything that needs judgment (a missing effect, an unknown name, a failing example) is left to the model.
@@ -13,22 +12,6 @@ import ast
 
 from .formatter import format_source
 from .preprocess import preprocess
-
-
-def _strip_comments(text: str) -> tuple[str, int]:
-    pre, _ = preprocess(text, "<fix>")
-    lines = text.split("\n")
-    removed = 0
-    for lineno, col, comment in reversed(pre.comments):
-        if comment.startswith("# why:"):
-            continue
-        code = lines[lineno - 1][:col].rstrip()
-        removed += 1
-        if code:
-            lines[lineno - 1] = code
-        else:
-            del lines[lineno - 1]
-    return "\n".join(lines), removed
 
 
 def eq_subject(test: ast.expr) -> str | None:
@@ -118,9 +101,7 @@ def _match_fix(text: str) -> tuple[str, int]:
             skipped.add(chain[0].lineno)
 
 
-def fix_source(text: str, keep_comments: bool = False) -> tuple[str, dict[str, int]]:
+def fix_source(text: str) -> tuple[str, dict[str, int]]:
     """Apply every mechanical fix. Returns the new text and how many of each fix were applied."""
-    text = format_source(text)
-    text, comments = (text, 0) if keep_comments else _strip_comments(text)
-    text, chains = _match_fix(text)
-    return format_source(text), {"F016": comments, "D003": chains}
+    text, chains = _match_fix(format_source(text))
+    return format_source(text), {"D003": chains}

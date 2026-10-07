@@ -1,0 +1,9 @@
+lib sms
+
+enum SmsError:
+    INVALID_NUMBER
+    RATE_LIMITED
+
+declare send(phone: str, text: str) -> Result[str, SmsError]
+    effects: net
+    doc: "Send a text message; returns the message id. Numbers must be international (+...)"

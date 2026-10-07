@@ -26,7 +26,7 @@ from .diagnostics import Diagnostic
 
 TYPE_RE = re.compile(r"type\s+(\w+)\s*=\s*\1\(\s*(\w+)\s*\)")
 BLOCK_RE = re.compile(r"(enum|record)\s+(\w+)\s*:")
-DECLARE_RE = re.compile(r"declare\s+(\w+)\s*\(.*\)\s*(?:->.+)?")
+DECLARE_RE = re.compile(r"declare\s+(\w+)\s*\(.*\)\s*(?:->\s*(.+))?")
 FIELD_RE = re.compile(r"(\w+)\s*:\s*(.+)")
 
 
@@ -38,10 +38,27 @@ class Manifest:
     enums: dict[str, list[str]] = field(default_factory=dict)
     records: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     functions: dict[str, set[str]] = field(default_factory=dict)
+    returns: dict[str, str] = field(default_factory=dict)
+    params: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def exports(self) -> set[str]:
         return set(self.newtypes) | set(self.enums) | set(self.records) | set(self.functions)
+
+
+def _param_names(text: str) -> list[str]:
+    """Names from `a: int, b: dict[str, int]`, splitting only on top-level commas."""
+    names, depth, current = [], 0, ""
+    for ch in text + ",":
+        if ch == "," and depth == 0:
+            if current.strip():
+                names.append(current.split(":")[0].strip())
+            current = ""
+            continue
+        depth += ch in "[(" 
+        depth -= ch in "])"
+        current += ch
+    return names
 
 
 def parse_manifest(path: Path) -> tuple[Manifest | None, list[Diagnostic]]:
@@ -85,6 +102,8 @@ def parse_manifest(path: Path) -> tuple[Manifest | None, list[Diagnostic]]:
         elif m := DECLARE_RE.fullmatch(line):
             block = ("declare", m.group(1))
             manifest.functions[m.group(1)] = set()
+            manifest.returns[m.group(1)] = (m.group(2) or "").strip()
+            manifest.params[m.group(1)] = _param_names(line[line.index("(") + 1 : line.rindex(")")])
         else:
             block = None
             err("M002", "expected 'type', 'enum', 'record', or 'declare'", lineno)

@@ -1,0 +1,14 @@
+[
+{"args": ["D(\"dr_lee\")", "P(\"p_ann\")", "M(9, 30)", "30"], "expect": "dr_lee@570"},
+{"args": ["D(\"dr_lee\")", "P(\"p_ann\")", "M(9, 15)", "30"], "expect": "error:SLOT_TAKEN"},
+{"args": ["D(\"dr_who\")", "P(\"p_ann\")", "M(9, 30)", "30"], "expect": "error:UNKNOWN_DOCTOR"},
+{"args": ["D(\"dr_lee\")", "P(\"p_zed\")", "M(9, 30)", "30"], "expect": "error:UNKNOWN_PATIENT"},
+{"args": ["D(\"dr_lee\")", "P(\"p_ann\")", "M(9, 30)", "5"], "expect": "error:TOO_SHORT"},
+{"args": ["D(\"dr_lee\")", "P(\"p_ann\")", "M(9, 30)", "121"], "expect": "error:TOO_LONG"},
+{"args": ["D(\"dr_lee\")", "P(\"p_ann\")", "M(11, 45)", "30"], "expect": "error:OUTSIDE_HOURS"},
+{"args": ["D(\"dr_lee\")", "P(\"p_ann\")", "M(11, 30)", "30"], "expect": "dr_lee@690"},
+{"args": ["D(\"dr_lee\")", "P(\"p_ann\")", "M(8, 59)", "10"], "expect": "error:OUTSIDE_HOURS"},
+{"args": ["D(\"dr_down\")", "P(\"p_ann\")", "M(10)", "30"], "expect": "error:CALENDAR_DOWN"},
+{"args": ["D(\"dr_lee\")", "P(\"p_ann\")", "M(9, 30)", "10"], "expect": "dr_lee@570"},
+{"args": ["D(\"dr_who\")", "P(\"p_zed\")", "M(9, 30)", "5"], "expect": "error:UNKNOWN_DOCTOR"}
+]

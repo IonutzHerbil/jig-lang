@@ -1,0 +1,19 @@
+module clinic.schedule
+
+from clinic.types import Minute
+
+
+def overlaps(start_a: Minute, length_a: int, start_b: Minute, length_b: int) -> bool:
+    """True if two time ranges [start, start + length) share any minute."""
+    examples:
+        overlaps(Minute(540), 30, Minute(560), 30) -> True
+        overlaps(Minute(540), 30, Minute(570), 30) -> False
+    return start_a < start_b + Minute(length_b) and start_b < start_a + Minute(length_a)
+
+
+def clock(m: Minute) -> str:
+    """Minutes since midnight as HH:MM."""
+    examples:
+        clock(Minute(545)) -> "09:05"
+        clock(Minute(0)) -> "00:00"
+    return f"{int(m) // 60:02d}:{int(m) % 60:02d}"

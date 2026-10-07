@@ -1,0 +1,35 @@
+module clinic.matching
+
+from clinic.directory import DOCTORS, MAX_LENGTH, MIN_LENGTH
+from clinic.schedule import clock, overlaps
+from clinic.types import ClinicError, Minute, Specialty
+from lib.calendar import bookings_for
+from std.result import Err, Ok, Result
+
+
+def first_free(specialty: Specialty, length: int) -> Result[str, ClinicError]:
+    """The earliest doctor and time of a specialty that can take a booking."""
+    examples:
+        first_free(Specialty.GENERAL, 60) -> Ok("dr_khan 10:00")
+        first_free(Specialty.DENTAL, 15) -> Err(ClinicError.NOT_FOUND)
+    if length < MIN_LENGTH:
+        return Err(ClinicError.TOO_SHORT)
+    if length > MAX_LENGTH:
+        return Err(ClinicError.TOO_LONG)
+    best_start = -1
+    best_doctor = ""
+    for doc in sorted(DOCTORS.values(), key=lambda d: str(d.id)):
+        if doc.specialty != specialty:
+            continue
+        booked = bookings_for(str(doc.id))
+        if booked.is_err():
+            continue
+        for start in range(int(doc.opens), int(doc.closes) - length + 1, 15):
+            if not any([overlaps(Minute(start), length, Minute(b.start), b.length) for b in booked.value]):
+                if best_start < 0 or start < best_start:
+                    best_start = start
+                    best_doctor = str(doc.id)
+                break
+    if best_start < 0:
+        return Err(ClinicError.NOT_FOUND)
+    return Ok(f"{best_doctor} {clock(Minute(best_start))}")

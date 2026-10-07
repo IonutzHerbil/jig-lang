@@ -24,6 +24,8 @@ for case in cases:
     r = {"i": case["i"]}
     try:
         ns = dict(vars(importlib.import_module(case["module"])))
+        for line in case["imports"]:
+            exec(line, ns)
         try:
             value = eval(case["call"], ns)
         except rt.ContractViolation as cv:
@@ -60,6 +62,12 @@ real_stdout.write(json.dumps(results))
 '''
 
 
+def runtime_import(line: str) -> str:
+    """`from std.result import Ok` -> `from jig_runtime import Ok`: std modules live in the runtime when built."""
+    module, _, names = line[len("from "):].partition(" import ")
+    return f"from jig_runtime import {names}" if module.startswith("std.") else line
+
+
 def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diagnostic]]:
     """Returns (total, passed, diagnostics)."""
     cases = []
@@ -67,7 +75,8 @@ def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diag
     for mod in sorted(project.modules.values(), key=lambda m: m.name):
         for fi in mod.functions.values():
             for ex in fi.examples:
-                cases.append({"i": len(cases), "module": mod.name, "call": ex.call, "kind": ex.kind, "expected": ex.expected})
+                cases.append({"i": len(cases), "module": mod.name, "call": ex.call, "kind": ex.kind, "expected": ex.expected,
+                              "imports": sorted(runtime_import(i) for i in fi.example_imports)})
                 meta.append((mod, fi, ex))
     if not cases:
         return 0, 0, []

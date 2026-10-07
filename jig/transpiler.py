@@ -70,8 +70,10 @@ class _Transformer(ast.NodeTransformer):
         return node
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.depth = getattr(self, "depth", 0) + 1
         self.generic_visit(node)
-        fi = self.mod.functions.get(node.name)
+        self.depth -= 1
+        fi = self.mod.functions.get(node.name) if self.depth == 0 else None
         if fi is None:
             return node
         requires = ast.List(elts=[_clause_entry(c, fi.params, False) for c in fi.requires], ctx=ast.Load())

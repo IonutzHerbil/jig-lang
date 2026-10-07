@@ -2,6 +2,10 @@
 
     python -m bench.report bench/results/<file>.jsonl [more files...]
 
+Delivered correct: passed its own checks and every hidden test. Code correct: the final code passes every
+hidden test, checks or not. A false alarm is correct code its own checks blocked; a silent bug passed its own
+checks but fails hidden tests. (Results from before graded_unchecked count blocked code as wrong.)
+
 Functional entropy: samples of one task are grouped by their outputs on the hidden inputs;
 0 bits means every sample behaves identically, log2(K) means every sample behaves differently.
 """
@@ -24,9 +28,9 @@ def summary(title: str, recs: list[dict]) -> None:
     for r in recs:
         by_cond[r["cond"]].append(r)
     print(f"\n## {title}\n")
-    print("| condition | samples | correct | hidden tests | clean 1st try | built | avg attempts | halluc./sample "
-          "| entropy (bits) | prompt tok | output tok | total tok |")
-    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    print("| condition | samples | delivered correct | code correct | false alarm | silent bug | clean 1st try "
+          "| avg attempts | halluc./sample | entropy (bits) | prompt tok | output tok | total tok |")
+    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for cond, rs in sorted(by_cond.items()):
         n = len(rs)
         tasks: dict[str, list[dict]] = defaultdict(list)
@@ -34,12 +38,14 @@ def summary(title: str, recs: list[dict]) -> None:
             tasks[r["task"]].append(r)
         ent = sum(entropy([json.dumps(r["outputs"]) for r in t]) for t in tasks.values()) / len(tasks)
         avg = lambda key: f"{sum(r.get(key, 0) for r in rs) / n:.0f}"  # noqa: E731
+        correct = [r["hidden_passed"] == r["hidden_total"] for r in rs]
         print(
             f"| {cond} | {n} "
-            f"| {sum(r['hidden_passed'] == r['hidden_total'] for r in rs) / n:.0%} "
-            f"| {sum(r['hidden_passed'] for r in rs) / sum(r['hidden_total'] for r in rs):.0%} "
+            f"| {sum(c and r['checked_ok'] for c, r in zip(correct, rs)) / n:.0%} "
+            f"| {sum(correct) / n:.0%} "
+            f"| {sum(c and not r['checked_ok'] for c, r in zip(correct, rs))} "
+            f"| {sum(r['checked_ok'] and not c for c, r in zip(correct, rs))} "
             f"| {sum(len(r['rounds']) == 1 and r['checked_ok'] for r in rs) / n:.0%} "
-            f"| {sum(r['checked_ok'] for r in rs) / n:.0%} "
             f"| {sum(len(r['rounds']) for r in rs) / n:.2f} "
             f"| {sum(r['hallucinations'] for r in rs) / n:.2f} "
             f"| {ent:.2f} | {avg('prompt_tokens')} | {avg('output_tokens')} | {avg('tokens')} |"

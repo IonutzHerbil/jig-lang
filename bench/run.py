@@ -5,10 +5,12 @@
 
 Conditions:
     python     the model writes Python with its own test_* functions; feedback is crashes and failing self-tests
+    python-plain  the model writes Python without tests; the only check is that the module imports
     jig        the model writes Jig with LANGUAGE.md as its manual; feedback is `jig check` (which runs its examples)
-    jig-short  the same, with the short manual in bench/cards/
-    jig-comments  like jig, but the model is asked to comment its reasoning and comments are kept (F016 off)
-    jig-learned   like jig, plus bench/cards/learned.md: mistakes earlier runs made (python -m bench.learn)
+    jig-short  the same, with the short manual in jig/cards/
+    jig-learned   like jig, plus jig/cards/learned.md: mistakes earlier runs made (python -m bench.learn)
+    jig-probe     like jig, plus one review turn after the checks pass, showing what the code returns on
+                  edge-case inputs (jig probe); the model confirms or sends a corrected file
 
 Tasks either stand alone or add a module to a project in bench/projects/<name>/<lang>/, whose files are shown
 to the model: Jig sources, manifests and decisions; Python sources, library stubs and DECISIONS.md.
@@ -29,7 +31,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from jig.cli import check_project, feedback_for_model
+from jig.cli import check_project, edge_probes, feedback_for_model
+from jig.autoimport import fix_imports
 from jig.fixer import fix_source
 from jig.transpiler import build
 
@@ -39,21 +42,30 @@ ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parent
 CODE_RE = re.compile(r"```[a-zA-Z]*\n(.*?)```", re.S)
 
-LEARNED = ROOT / "cards" / "learned.md"
+CARDS = REPO / "jig" / "cards"
+LEARNED = CARDS / "learned.md"
 MANUALS = {
     "jig": (REPO / "LANGUAGE.md").read_text(encoding="utf-8"),
-    "jig-short": (ROOT / "cards" / "jig_short.md").read_text(encoding="utf-8"),
-    "jig-comments": (REPO / "LANGUAGE.md").read_text(encoding="utf-8")
-    + "\n\nIn this project free-text `#` comments ARE allowed, overriding the rule above: explain your plan and "
-    "reasoning in comments as you write the code, e.g. what each step does and why.",
+    "jig-short": (CARDS / "jig_short.md").read_text(encoding="utf-8"),
+    "jig-probe": (REPO / "LANGUAGE.md").read_text(encoding="utf-8"),
     "jig-learned": (REPO / "LANGUAGE.md").read_text(encoding="utf-8") + "\n\n"
     + (LEARNED.read_text(encoding="utf-8") if LEARNED.exists() else ""),
 }
-PROJECT_MANUAL = (ROOT / "cards" / "jig_short_project.md").read_text(encoding="utf-8")
+PROJECT_MANUAL = (CARDS / "jig_short_project.md").read_text(encoding="utf-8")
+PYTHON_PLAIN_SYSTEM = (
+    "You write Python 3.12, standard library only.\n\nAnswer with exactly one ```python code block holding the "
+    "complete file."
+)
 PYTHON_SYSTEM = (
-    "You write Python 3.12, standard library only. Include a few `def test_*()` functions using assert that "
-    "check your own code; they are run as your feedback.\n\nAnswer with exactly one ```python code block holding "
+    "You write Python 3.12, standard library only. Include a few pytest `test_*` functions in the same file that "
+    "check your own code; pytest runs them as your feedback.\n\nAnswer with exactly one ```python code block holding "
     "the complete file."
+)
+
+REVIEW = (
+    "Your code passes its checks. This is what it actually returns on edge-case inputs:\n\n{probes}\n\n"
+    "Compare each result with the request. If every one is what the request asks for, reply with just OK. "
+    "Otherwise reply with the complete corrected file."
 )
 
 ERROR_STYLE = {
@@ -101,24 +113,6 @@ for case in spec["cases"]:
 out.write(json.dumps({"outputs": results}))
 '''
 
-# Feedback for the python condition: import the module and run its test_* functions.
-SELF_TEST = r'''
-import importlib, sys, traceback
-sys.path.insert(0, sys.argv[1])
-try:
-    m = importlib.import_module(sys.argv[2])
-except Exception:
-    print(traceback.format_exc(limit=-1)); raise SystemExit(1)
-failed = 0
-for name in sorted(n for n in dir(m) if n.startswith("test_") and callable(getattr(m, n))):
-    try:
-        getattr(m, name)()
-    except Exception as e:
-        failed += 1
-        print(f"{name} failed: {type(e).__name__}: {e}".rstrip(": "))
-raise SystemExit(1 if failed else 0)
-'''
-
 # Error classes that mean "referenced something that does not exist", per language.
 HALLUCINATION = {
     "jig": {"R001", "R002", "R003", "E001", "E002"},
@@ -156,7 +150,7 @@ def project_context(name: str, lang: str) -> str:
     return "\n\n".join(f"### {f.relative_to(base).as_posix()}\n{text}" for f, text in shown.items())
 
 
-def check(lang: str, code: str, work: Path, module: str, comments: bool = False) -> tuple[bool, list[str], str, Path]:
+def check(lang: str, code: str, work: Path, module: str, tests: bool = True) -> tuple[bool, list[str], str, Path]:
     """Run the condition's own toolchain. Returns (ok, error codes, feedback text, build dir)."""
     build_dir = work / "build"
     parts = module.split(".")
@@ -164,23 +158,46 @@ def check(lang: str, code: str, work: Path, module: str, comments: bool = False)
         target = build_dir.joinpath(*parts[:-1], parts[-1] + ".py")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(code, encoding="utf-8")
+        if not tests:
+            # No verification beyond "it imports": what shipping unchecked Python looks like.
+            p = subprocess.run(
+                [sys.executable, "-c", f"import {module}"], capture_output=True, text=True, timeout=60, cwd=build_dir,
+                env={**os.environ, "PYTHONHASHSEED": "0", "PYTHONPATH": str(build_dir)},
+            )
+            text = p.stderr.strip()
+            return p.returncode == 0, re.findall(r"\b(\w+Error)\b", text), text, build_dir
+        # Python's toolchain: pytest on the module's own tests (fixtures like monkeypatch work).
         try:
-            p = subproc(SELF_TEST, [str(build_dir), module])
+            p = subprocess.run(
+                [sys.executable, "-m", "pytest", "-q", "--tb=short", "--no-header", "-p", "no:cacheprovider",
+                 "--rootdir", str(build_dir), str(target)],
+                capture_output=True, text=True, timeout=120, cwd=build_dir,
+                env={**os.environ, "PYTHONHASHSEED": "0", "PYTHONPATH": str(build_dir)},
+            )
         except subprocess.TimeoutExpired:
-            return False, ["Timeout"], "timed out after 60s", build_dir
+            return False, ["Timeout"], "timed out after 120s", build_dir
         text = (p.stdout + p.stderr).strip()
         codes = re.findall(r"\b(\w+Error|AssertionError)\b", text)
-        return p.returncode == 0, codes, text, build_dir
+        return p.returncode in (0, 5), codes, text, build_dir  # 5: no tests collected
     src = work / "src"
     target = src.joinpath(*parts[:-1], parts[-1] + ".jig")
     target.parent.mkdir(parents=True, exist_ok=True)
-    # Mechanical fixes (formatting, comments, if-chains to match) are the tool's job, as in an agent's toolchain.
-    target.write_text(fix_source(code, keep_comments=comments)[0], encoding="utf-8")
-    project, summary = check_project([str(src)], allow_comments=comments)
-    if summary["ok"]:
-        shutil.rmtree(build_dir, ignore_errors=True)
+    # Mechanical fixes (formatting, if-chains to match) are the tool's job, as in an agent's toolchain.
+    target.write_text(fix_source(code)[0], encoding="utf-8")
+    fix_imports(sorted(src.rglob("*.jig")), only={target})
+    project, summary = check_project([str(src)])
+    shutil.rmtree(build_dir, ignore_errors=True)
+    try:
+        # Built even when checks fail, so the hidden tests can tell false alarms from real failures.
         build(project, build_dir, fakes=True)
+    except Exception:
+        pass
     return summary["ok"], [d["code"] for d in summary["diagnostics"]], feedback_for_model(project), build_dir
+
+
+def probe_text(work: Path) -> str:
+    project, summary = check_project([str(work / "src")], run_ex=False)
+    return edge_probes(project) if summary["ok"] else ""
 
 
 def hidden(build_dir: Path, task: dict, module: str, cases: list[dict]) -> list:
@@ -219,7 +236,7 @@ def run_sample(model, task_dir: Path, task: dict, cond: str, rounds: int) -> dic
                   + MANUALS[cond] + (("\n\n" + PROJECT_MANUAL) if project and cond == "jig-short" else "")
                   + "\n\nAnswer with exactly one ```jig code block holding the complete file.")
     else:
-        system = PYTHON_SYSTEM
+        system = PYTHON_PLAIN_SYSTEM if cond == "python-plain" else PYTHON_SYSTEM
     turns = [prompt]
     record = {"rounds": [], "feedback": [], "code": [], "tokens": 0, "prompt_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
     ok, build_dir = False, None
@@ -227,22 +244,35 @@ def run_sample(model, task_dir: Path, task: dict, cond: str, rounds: int) -> dic
         work = Path(tmp)
         if project:
             shutil.copytree(ROOT / "projects" / project / lang, work / ("src" if lang == "jig" else "build"))
+        in_review = False
         for _ in range(rounds):
             reply = model(system, turns, task_dir, lang)
             for key in ("tokens", "prompt_tokens", "output_tokens", "cached_tokens"):
                 record[key] += getattr(reply, key)
             blocks = CODE_RE.findall(reply.text)
+            if in_review and not blocks:
+                record["review"] = "confirmed"
+                break
             code = max(blocks, key=len) if blocks else reply.text
-            ok, codes, feedback, build_dir = check(lang, code, work, module, comments=cond == "jig-comments")
+            ok, codes, feedback, build_dir = check(lang, code, work, module, tests=cond != "python-plain")
             record["rounds"].append(codes)
             record["code"].append(code)
+            if in_review:
+                record["review"], in_review = "revised", False
             if ok:
+                if cond.endswith("-probe") and "review" not in record and (probes := probe_text(work)):
+                    record["probes"] = probes
+                    in_review = True
+                    turns += [reply.text, REVIEW.format(probes=probes)]
+                    continue
                 break
             record["feedback"].append(feedback[:1500])
             turns += [reply.text, f"Your code failed its checks:\n{feedback[:6000]}\n\nReply with the complete corrected file."]
-        outputs = hidden(build_dir, task, module, cases) if ok else ["not_built"] * len(cases)
+        # Graded whether or not its own checks passed: the report separates delivered results from false alarms.
+        outputs = hidden(build_dir, task, module, cases)
     record.update(
         checked_ok=ok,
+        graded_unchecked=True,
         outputs=outputs,
         hidden_passed=sum(same(o, c["expect"]) for o, c in zip(outputs, cases)),
         hidden_total=len(cases),
@@ -288,8 +318,11 @@ def main(argv: list[str] | None = None) -> int:
                                model=args.model, temperature=args.temperature, seconds=round(time.monotonic() - t0, 1))
                     f.write(json.dumps(rec) + "\n")
                     f.flush()
-                    print(f"{task_dir.name:22} {cond:9} #{k}  rounds={len(rec['rounds'])}  "
-                          f"hidden={rec['hidden_passed']}/{rec['hidden_total']}", flush=True)
+                    correct = rec["hidden_passed"] == rec["hidden_total"]
+                    outcome = ("delivered" if correct else "SILENT BUG") if rec["checked_ok"] else (
+                        "false alarm" if correct else "failed")
+                    print(f"{task_dir.name:22} {cond:9} #{k}  attempts={len(rec['rounds'])}  "
+                          f"hidden={rec['hidden_passed']}/{rec['hidden_total']}  {outcome}", flush=True)
     print(f"\nwrote {out}\nreport: python -m bench.report {out}")
     return 0
 
