@@ -1,0 +1,18 @@
+from dataclasses import dataclass, field
+from datetime import date
+from enum import Enum
+
+
+class Status(Enum):
+    OPEN = "open"
+    PAID = "paid"
+
+
+@dataclass
+class Order:
+    id: str
+    sku: str
+    quantity: int
+    placed: date
+    status: Status = Status.OPEN
+    notes: list[str] = field(default_factory=list)

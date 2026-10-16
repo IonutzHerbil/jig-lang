@@ -1,0 +1,63 @@
+module gaps
+
+from dataclasses import dataclass
+from enum import Enum
+from functools import lru_cache
+
+
+@dataclass(frozen=True)
+class Point:
+    x: int
+    y: int
+
+
+class Color(Enum):
+    RED = "red"
+    GREEN = "green"
+
+
+@lru_cache(maxsize=None)
+def slow_square(n: int) -> int:
+    examples:
+        slow_square(4) -> 16
+    return n * n
+
+
+def evens(n: int):
+    for i in range(n):
+        if i % 2 == 0:
+            yield i
+
+
+def total(*nums: int) -> int:
+    examples:
+        total(1, 2, 3) -> 6
+    return sum(nums)
+
+
+def describe(**fields: str) -> str:
+    examples:
+        describe(a="1") -> "a=1"
+    return ",".join(f"{k}={v}" for k, v in fields.items())
+
+
+def norm1(p: Point) -> int:
+    examples:
+        norm1(Point(3, -4)) -> 7
+    return abs(p.x) + abs(p.y)
+
+
+def color_name(c: Color) -> str:
+    examples:
+        color_name(Color.RED) -> "red"
+    match c:
+        case Color.RED:
+            return "red"
+        case Color.GREEN:
+            return "green"
+
+
+def even_list(n: int) -> list[int]:
+    examples:
+        even_list(5) -> [0, 2, 4]
+    return list(evens(n))

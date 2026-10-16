@@ -47,9 +47,9 @@ TOOLCHAIN = {
 SYSTEM = """You are a software engineer working in a Python repository. You see it only through actions.
 Reply with exactly ONE action per message, as the first line, in one of these forms:
 
-LIST <directory>
-READ <path>
-SEARCH <python regex>            (searches every .py file; shows path:line: text)
+LIST <directory>                 e.g. LIST billing
+READ <path>                      e.g. READ billing/models.py
+SEARCH <text or regex>           e.g. SEARCH def charge   (every .py file; shows path:line: text)
 WRITE <path>
 ```python
 <the complete new content of the file>
@@ -126,12 +126,27 @@ def run_checks(root: Path, cond: str) -> tuple[bool, str, list[str]]:
 # ---------------------------------------------------------------- actions
 
 
+def clean_arg(arg: str) -> str:
+    """The argument a model meant: inside `backticks` or quotes if it used them, else the line as written."""
+    m = re.match(r"\s*([`'\"])(.+?)\1", arg)
+    return m.group(2) if m else arg.strip()
+
+
+def search_pattern(arg: str) -> re.Pattern[str]:
+    """A regex when it is one; otherwise the text literally (globs like *tax* become tax)."""
+    text = clean_arg(arg)
+    try:
+        return re.compile(text)
+    except re.error:
+        return re.compile(re.escape(text.strip("*")))
+
+
 def act(root: Path, reply: str, cond: str, log: dict) -> tuple[str, bool]:
     """Carry out the first action in a reply. Returns (what the agent sees next, finished)."""
     m = ACTION_RE.search(reply)
     if not m:
         return "No action found. Start your reply with one of LIST, READ, SEARCH, WRITE, EDIT, CHECK, DONE.", False
-    action, arg = m.group(1), m.group(2).strip()
+    action, arg = m.group(1), clean_arg(m.group(2)) if m.group(1) != "SEARCH" else m.group(2).strip()
     log["actions"].append(action)
     after = reply[m.end():]
     if action == "LIST":
@@ -147,10 +162,9 @@ def act(root: Path, reply: str, cond: str, log: dict) -> tuple[str, bool]:
         lines = p.read_text(encoding="utf-8").splitlines()
         return "\n".join(f"{i + 1:4} {line}" for i, line in enumerate(lines[:400])), False
     if action == "SEARCH":
-        try:
-            rx = re.compile(arg)
-        except re.error as e:
-            return f"Invalid regex: {e}", False
+        if not arg or arg.startswith("<"):
+            return "SEARCH needs the text to look for, e.g. SEARCH def charge", False
+        rx = search_pattern(arg)
         hits = []
         for f in sorted(root.rglob("*.py")):
             if SKIP & set(f.relative_to(root).parts):
@@ -158,7 +172,9 @@ def act(root: Path, reply: str, cond: str, log: dict) -> tuple[str, bool]:
             for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
                 if rx.search(line):
                     hits.append(f"{f.relative_to(root).as_posix()}:{i}: {line.strip()}")
-        return "\n".join(hits[:40]) + (f"\n... {len(hits) - 40} more" if len(hits) > 40 else "") or "No matches.", False
+        if not hits:
+            return f"No matches for {rx.pattern!r}.", False
+        return "\n".join(hits[:40]) + (f"\n... {len(hits) - 40} more" if len(hits) > 40 else ""), False
     if action in ("WRITE", "EDIT"):
         p = safe_path(root, arg)
         if not p or p.suffix not in (".py", ".manifest", ".md", ".txt"):

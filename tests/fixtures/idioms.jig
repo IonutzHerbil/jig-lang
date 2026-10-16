@@ -1,0 +1,231 @@
+module idioms
+
+import itertools
+import math
+import re
+from collections import Counter, defaultdict, deque
+from dataclasses import dataclass
+from functools import lru_cache, reduce
+from typing import Optional
+
+LIMITS = {"low": 1, "high": 10}
+
+
+def walrus(text: str) -> int:
+    examples:
+        walrus("a1b22") -> 2
+    if (m := re.findall(r"\d+", text)):
+        return len(m)
+    return 0
+
+
+def star_unpack(xs: list[int]) -> tuple[int, list[int]]:
+    examples:
+        star_unpack([1, 2, 3]) -> (1, [2, 3])
+    first, *rest = xs
+    return first, rest
+
+
+def kw_only(a: int, *, scale: int = 2) -> int:
+    examples:
+        kw_only(3, scale=3) -> 9
+        kw_only(3) -> 6
+    return a * scale
+
+
+def default_dict(words: list[str]) -> dict[str, list[str]]:
+    examples:
+        default_dict(["apple", "avocado", "bean"]) -> {"a": ["apple", "avocado"], "b": ["bean"]}
+    groups: defaultdict[str, list[str]] = defaultdict(list)
+    for w in words:
+        groups[w[0]].append(w)
+    return dict(groups)
+
+
+def group_runs(xs: list[int]) -> list[tuple[int, int]]:
+    examples:
+        group_runs([1, 1, 2, 3, 3, 3]) -> [(1, 2), (2, 1), (3, 3)]
+    return [(k, len(list(g))) for k, g in itertools.groupby(xs)]
+
+
+def product(xs: list[int]) -> int:
+    examples:
+        product([2, 3, 4]) -> 24
+    return reduce(lambda a, b: a * b, xs, 1)
+
+
+def window_max(xs: list[int], k: int) -> list[int]:
+    examples:
+        window_max([1, 3, 2, 5, 4], 2) -> [3, 3, 5, 5]
+    q: deque[int] = deque()
+    out = []
+    for i, x in enumerate(xs):
+        while q and xs[q[-1]] <= x:
+            q.pop()
+        q.append(i)
+        if q[0] <= i - k:
+            q.popleft()
+        if i >= k - 1:
+            out.append(xs[q[0]])
+    return out
+
+
+def for_else(xs: list[int], target: int) -> str:
+    examples:
+        for_else([1, 2], 2) -> "found"
+        for_else([1, 2], 5) -> "missing"
+    for x in xs:
+        if x == target:
+            break
+    else:
+        return "missing"
+    return "found"
+
+
+def safe_div(a: float, b: float) -> Optional[float]:
+    examples:
+        safe_div(1.0, 2.0) -> 0.5
+        safe_div(1.0, 0.0) -> None
+    try:
+        return a / b
+    except ZeroDivisionError:
+        return None
+    finally:
+        pass
+
+
+def fib(n: int) -> int:
+    examples:
+        fib(10) -> 55
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+
+def nested_comp(n: int) -> list[tuple[int, int]]:
+    examples:
+        nested_comp(2) -> [(0, 0), (0, 1), (1, 0), (1, 1)]
+    return [(i, j) for i in range(n) for j in range(n)]
+
+
+def dict_set_comp(words: list[str]) -> tuple[dict[str, int], set[int]]:
+    examples:
+        dict_set_comp(["a", "bb"]) -> ({"a": 1, "bb": 2}, {1, 2})
+    return {w: len(w) for w in words}, {len(w) for w in words}
+
+
+def chained(x: int) -> bool:
+    examples:
+        chained(5) -> True
+    return LIMITS["low"] <= x <= LIMITS["high"]
+
+
+def top_words(text: str) -> list[tuple[str, int]]:
+    examples:
+        top_words("a b a") -> [("a", 2), ("b", 1)]
+    return Counter(text.split()).most_common()
+
+
+def hypot(a: float, b: float) -> float:
+    examples:
+        hypot(3.0, 4.0) -> 5.0
+    return math.sqrt(a**2 + b**2)
+
+
+def match_shapes(shape: tuple) -> str:
+    examples:
+        match_shapes(("circle", 2)) -> "circle r=2"
+        match_shapes(("rect", 2, 3)) -> "rect 2x3"
+        match_shapes(("x",)) -> "unknown"
+    match shape:
+        case ("circle", r):
+            return f"circle r={r}"
+        case ("rect", w, h):
+            return f"rect {w}x{h}"
+        case _:
+            return "unknown"
+
+
+def counter_closure() -> int:
+    examples:
+        counter_closure() -> 3
+    total = 0
+
+    def add(n: int) -> int:
+        return total + n
+
+    for n in range(3):
+        total = add(1)
+    return total
+
+
+def assertive(x: int) -> int:
+    examples:
+        assertive(2) -> 4
+    assert x > 0, "x must be positive"
+    return x * 2
+
+
+def sort_records(rows: list[dict[str, int]]) -> list[int]:
+    examples:
+        sort_records([{"a": 2}, {"a": 1}]) -> [1, 2]
+    return [r["a"] for r in sorted(rows, key=lambda r: r["a"])]
+
+
+def joined(parts: list[str]) -> str:
+    examples:
+        joined(["a", "b"]) -> "a-b"
+    return "-".join(p.strip() for p in parts if p)
+
+
+def gen_sum(n: int) -> int:
+    examples:
+        gen_sum(4) -> 6
+    return sum(i for i in range(n))
+
+
+def maxby(xs: list[str]) -> str:
+    examples:
+        maxby(["a", "ccc", "bb"]) -> "ccc"
+    return max(xs, key=len)
+
+
+def unpack_pairs(pairs: list[tuple[str, int]]) -> dict[str, int]:
+    examples:
+        unpack_pairs([("a", 1)]) -> {"a": 1}
+    return dict(pairs)
+
+
+def string_ops(s: str) -> str:
+    examples:
+        string_ops("  Hello World ") -> "hello_world"
+    return s.strip().lower().replace(" ", "_")
+
+
+def slicing(xs: list[int]) -> list[int]:
+    examples:
+        slicing([1, 2, 3, 4, 5]) -> [5, 3, 1]
+    return xs[::-2]
+
+
+def aug_assign(xs: list[int]) -> int:
+    examples:
+        aug_assign([1, 2, 3]) -> 6
+    total = 0
+    for x in xs:
+        total += x
+    return total
+
+
+def isinst(v: object) -> str:
+    examples:
+        isinst(3) -> "int"
+        isinst("a") -> "str"
+    if isinstance(v, int):
+        return "int"
+    return "str"
+
+
+def divmods(n: int) -> tuple[int, int]:
+    examples:
+        divmods(17) -> (5, 2)
+    q, r = divmod(n, 3)
+    return q, r

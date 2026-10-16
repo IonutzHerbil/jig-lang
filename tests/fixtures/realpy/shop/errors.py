@@ -1,0 +1,8 @@
+class ShopError(Exception):
+    """Base error."""
+
+
+class OutOfStock(ShopError):
+    def __init__(self, sku: str) -> None:
+        super().__init__(f"out of stock: {sku}")
+        self.sku = sku

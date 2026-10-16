@@ -1,0 +1,27 @@
+import json
+import re
+from collections import Counter
+
+import pandas as pd
+import requests
+from pydantic import BaseModel
+
+
+class User(BaseModel):
+    name: str
+
+
+def good(path: str) -> int:
+    frame = pd.read_csv(path, sep=",")
+    resp = requests.get("https://example.com", timeout=5)
+    return len(frame) + resp.status_code + len(json.dumps({"a": 1}, indent=2)) + len(re.split(",", "a,b"))
+
+
+def bad(path: str) -> int:
+    frame = pd.read_csvv(path)
+    frame2 = pd.read_csv(path, sepp=",")
+    resp = requests.gett("https://example.com")
+    data = json.dumps({"a": 1}, indnt=2)
+    parts = re.split(",", "a,b", 0, 0, 0)
+    top = Counter("abc").most_common(1, 2)
+    return len(frame) + len(frame2) + resp.status_code + len(data) + len(parts) + len(top)

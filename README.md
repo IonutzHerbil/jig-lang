@@ -43,23 +43,35 @@ When the model can see everything, unchecked Python is as correct as Jig and che
 work happens: codebases the model cannot hold in view. AI-written tests blocked 25-33% of correct Python
 solutions on app tasks; Jig's mechanical checks blocked correct code once in every run combined.
 
-## Quick start
+## Install
+
+Python 3.12 or newer. From a clone of this repository:
 
 ```bash
-pip install -e .
-
-# Check an existing Python codebase as it is
-jig check --py --pretty bench/repos/billing
-
-# See the checker catch typical AI mistakes in Jig files
-jig check --pretty examples/shop examples/broken
-
-# Implement a feature from a plain-language request (needs GEMINI_API_KEY)
-jig do "Add gift cards that customers can put towards an order" --project path/to/project
+pip install .                 # or, without cloning:  pip install git+<repository url>
 ```
 
-`jig check` prints JSON by default, `--pretty` for people, `--for-model` for the compact text an AI repairs
-from best. The exit code is 0 only when there are no errors.
+That installs the `jig` command and nothing else: the benchmark and the research tools stay in the repository.
+
+## Start a project
+
+```bash
+jig new myapp                 # a Jig project (.jig files)
+jig new myapp --py            # or a plain Python project that Jig checks
+cd myapp
+```
+
+The project comes with an example module, `lib/` and `.decisions/` for project rules, and Claude Code set up:
+open the folder in Claude Code and describe what you want built. Claude starts with a map of the project,
+every edit is checked, and it cannot finish while a check fails. Without Claude Code:
+
+```bash
+jig do "add a farewell next to the greeting"   # an AI implements it, checked, shown to you before applying (GEMINI_API_KEY)
+jig check --pretty .                           # every check
+jig gate .                                     # checks, then tests: for CI and before committing
+```
+
+To add Jig to a project you already have: `jig init --py` inside it.
 
 ## What Jig checks
 
@@ -130,7 +142,10 @@ Full reference: [LANGUAGE.md](LANGUAGE.md). Every error code: [ERROR_CODES.md](E
 
 | Command | Does |
 | --- | --- |
+| `jig new <dir> [--py]` | start a project with Claude Code set up |
+| `jig init [dir] [--py] [--user]` | add Jig and the Claude Code hooks to an existing project, or to every project |
 | `jig check <paths> [--py] [--pretty \| --for-model]` | every check, then runs examples |
+| `jig gate [paths] [--py]` | CI and pre-commit gate: every check, then the project's tests; changes nothing |
 | `jig fix <paths>` | mechanical fixes: formatting, if/elif chains to `match`, unambiguous missing imports and module paths |
 | `jig do "<request>" [--project dir]` | an AI implements the request in a scratch copy, repairs until the checks pass, shows how it read the request, the diff and edge-case behavior, then asks before applying |
 | `jig probe <paths>` | what each function returns on edge inputs (`""`, `0`, `[]`, `-1`) |
@@ -141,12 +156,16 @@ Full reference: [LANGUAGE.md](LANGUAGE.md). Every error code: [ERROR_CODES.md](E
 
 ## Use it from Claude Code
 
-```bash
-python integrations/claude-code/install.py <your project>   # or --user for every project
-```
+`jig new` and `jig init` set this up; `jig init --user` does it for every project on the machine. It adds a
+`jig` skill and three hooks:
 
-This adds a `jig` skill (how to write Jig) and a hook: every time Claude writes a `.jig` file, `jig fix` and
-`jig check` run on it and the modules it imports, and errors go straight back to Claude.
+| Hook | What Claude gets |
+| --- | --- |
+| Session start | a map of the project: every module's signatures and effects, each library's exports, the project's decisions, and the mistakes agents made in this project before |
+| After every edit | `jig fix` and `jig check` on the file and the modules it imports; errors go straight back to Claude and are remembered per project (`.jig/instincts.json`) |
+| Before finishing | Claude cannot finish while a file it changed fails the checks (at most 3 times per session) |
+
+In CI or a pre-commit hook, `jig gate --py .` runs every check and then the tests, and fails if either fails.
 
 ## The benchmark
 
@@ -169,21 +188,19 @@ Not yet supported: classes with methods, `async`, `with`, checking the types (no
 library call arguments, attributes of values whose type cannot be inferred (such as the logger returned by
 `logging.getLogger`), and third-party packages without a manifest.
 
-## Layout
+## Repository layout
 
-```
-jig/checker.py      every static check
-jig/preprocess.py   Jig syntax to parseable Python, line numbers preserved
-jig/transpiler.py   checked modules to a Python package
-jig/jig_runtime.py  Result, Option, newtypes, records, contracts, Ctx
-jig/manifest.py     lib/*.manifest parser
-jig/decisions.py    .decisions/*.decision parser
-jig/fixer.py        jig fix; jig/autoimport.py adds missing imports
-jig/probes.py       jig probe
-jig/do.py           jig do; jig/llm.py is its model client
-jig/hook.py         the Claude Code hook
-jig/cards/          the short manual AIs read (also the Claude Code skill)
-bench/              the benchmark: tasks, projects, repos, runners, report, explorer
-integrations/       Claude Code installer
-vscode-jig/         VS Code syntax highlighting and file icons
+| Folder | What it is | Installed by `pip install`? |
+| --- | --- | --- |
+| `jig/` | the language and its tools: checker, transpiler, runtime, `jig` command, Claude Code hooks, the manual AIs read (`jig/cards/`) | yes |
+| `tests/` | Jig's own test suite: `pip install -e .[dev]`, then `pytest` | no |
+| `bench/` | the benchmark and research tools ([bench/README.md](bench/README.md)) | no |
+| `examples/` | example Jig projects, including deliberately broken ones | no |
+| `vscode-jig/` | VS Code syntax highlighting and file icons | no (see its README) |
+
+## Developing Jig
+
+```bash
+pip install -e .[dev]         # editable install with pytest
+pytest                        # about a minute: checker, tools, hooks, and every benchmark reference solution
 ```
