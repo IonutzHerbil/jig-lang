@@ -1,0 +1,7 @@
+lib taxsvc
+
+exception TaxServiceDown
+
+declare rate_for(country: str) -> float
+    effects: net
+    doc: "The sales tax percent for a country code (0 for countries without one)"

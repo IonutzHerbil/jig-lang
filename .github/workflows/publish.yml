@@ -1,0 +1,25 @@
+name: publish
+
+# Push a version tag (git tag v0.2.0 && git push --tags) to publish that version to PyPI.
+# One-time setup on pypi.org: add this repository as a "trusted publisher" for the jig-lang project
+# (owner IonutzHerbil, repository jig-lang, workflow publish.yml, environment pypi). No token is stored anywhere.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .[dev] build
+      - run: pytest
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -175,7 +175,7 @@ def new(target: Path, python: bool) -> list[str]:
     files |= {
         "README.md": _readme(name, pkg, python),
         "lib/README.md": "Library manifests: one `<name>.manifest` per third-party service or package. "
-                         "See LANGUAGE.md in jig-lang.\n",
+                         "Format: `jig doc manifest`.\n",
         ".decisions/README.md": "Project decisions: one `<id>.decision` per rule. Jig enforces the ✓ newtype "
                                 "lines; AIs read the rest.\n",
     }

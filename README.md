@@ -29,9 +29,9 @@ error R002 (billing.service line 35, in top): 'Counter' (collections) has no att
 
 ### Measured
 
-With the `bench/` harness, a model gets a feature request, repairs its code against its toolchain, and is graded
-on hidden tests it never sees (gemini-flash-lite, 3 samples per task; details and every caveat in
-[bench/RESULTS.md](bench/RESULTS.md)):
+In the [Jig benchmark](https://github.com/IonutzHerbil/jig-bench), a model gets a feature request, repairs its
+code against its toolchain, and is graded on hidden tests it never sees (gemini-flash-lite, 3 samples per task;
+details and every caveat in the benchmark's RESULTS.md):
 
 | Setting | Jig delivered correct | Python delivered correct |
 | --- | --- | --- |
@@ -45,13 +45,15 @@ solutions on app tasks; Jig's mechanical checks blocked correct code once in eve
 
 ## Install
 
-Python 3.12 or newer. From a clone of this repository:
+Python 3.12 or newer. You do not need to clone this repository:
 
 ```bash
-pip install .                 # or, without cloning:  pip install git+<repository url>
+pip install jig-lang                                               # from PyPI
+pip install git+https://github.com/IonutzHerbil/jig-lang.git       # or the latest version from GitHub
 ```
 
-That installs the `jig` command and nothing else: the benchmark and the research tools stay in the repository.
+You get the whole language: the checker, the transpiler and runtime, the `jig` command, the Claude Code
+integration, and the language reference (`jig doc`). It has no dependencies beyond Python.
 
 ## Start a project
 
@@ -136,7 +138,8 @@ def charge(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
 - `effects:`, `requires:`, `ensures:` and `examples:`: optional, and checked whenever present
 - `.jig` files transpile to plain Python with no dependencies (`jig build`)
 
-Full reference: [LANGUAGE.md](LANGUAGE.md). Every error code: [ERROR_CODES.md](ERROR_CODES.md).
+Full reference: [LANGUAGE.md](jig/docs/LANGUAGE.md), or `jig doc` offline. Every error code:
+[ERROR_CODES.md](jig/docs/ERROR_CODES.md), or `jig doc T002` for one.
 
 ## Commands
 
@@ -153,6 +156,7 @@ Full reference: [LANGUAGE.md](LANGUAGE.md). Every error code: [ERROR_CODES.md](E
 | `jig fmt <paths>` | canonical formatting of `.jig` files |
 | `jig build <paths> -o <dir>` | check, then write a plain Python package |
 | `jig run <paths> --entry module.function` | check, build, and call an entry point |
+| `jig doc [topic]` | the language reference: `jig doc`, `jig doc errors`, `jig doc T002`, `jig doc effects`, `jig doc --list` |
 
 ## Use it from Claude Code
 
@@ -167,21 +171,6 @@ Full reference: [LANGUAGE.md](LANGUAGE.md). Every error code: [ERROR_CODES.md](E
 
 In CI or a pre-commit hook, `jig gate --py .` runs every check and then the tests, and fails if either fails.
 
-## The benchmark
-
-`bench/` is how Jig's rules are decided: a rule stays only if it catches more bugs than it costs.
-
-| Command | Does |
-| --- | --- |
-| `python -m bench.run --model <gemini model> --conditions python,jig-short` | feature requests in standalone and app tasks, Python vs Jig, graded on hidden tests; `--context partial` hides most of the codebase |
-| `python -m bench.agent --model <gemini model>` | engineering scenarios in a real repository: an agent explores with LIST/READ/SEARCH, edits, checks and finishes; graded on hidden tests plus the repository's own suite |
-| `python -m bench.report <results>` | delivered, false alarms, silent bugs, attempts and cost per condition |
-| `python -m bench.explain <results> --xai` | an explorer page: every sample's attempts and feedback, plus SHAP and LIME explanations of what predicts success (`pip install -e .[xai]`) |
-
-The engineering scenarios cover a multi-file feature, a bug hunt from a support report, a rename across the
-codebase, a requirement change, a library integration, a dependency upgrade and a data-model change, in a
-billing service with three external libraries and its own test suite.
-
 ## Status
 
 Not yet supported: classes with methods, `async`, `with`, checking the types (not only the count and names) of
@@ -193,8 +182,8 @@ library call arguments, attributes of values whose type cannot be inferred (such
 | Folder | What it is | Installed by `pip install`? |
 | --- | --- | --- |
 | `jig/` | the language and its tools: checker, transpiler, runtime, `jig` command, Claude Code hooks, the manual AIs read (`jig/cards/`) | yes |
+| `jig/docs/` | the language reference and every error code (`jig doc`) | yes |
 | `tests/` | Jig's own test suite: `pip install -e .[dev]`, then `pytest` | no |
-| `bench/` | the benchmark and research tools ([bench/README.md](bench/README.md)) | no |
 | `examples/` | example Jig projects, including deliberately broken ones | no |
 | `vscode-jig/` | VS Code syntax highlighting and file icons | no (see its README) |
 
@@ -202,5 +191,8 @@ library call arguments, attributes of values whose type cannot be inferred (such
 
 ```bash
 pip install -e .[dev]         # editable install with pytest
-pytest                        # about a minute: checker, tools, hooks, and every benchmark reference solution
+pytest                        # checker, tools and hooks, in seconds
 ```
+
+How Jig's rules are decided (a rule stays only if it catches more bugs than it costs) lives in a separate
+repository: [jig-bench](https://github.com/IonutzHerbil/jig-bench).

@@ -1,4 +1,4 @@
-"""jig command line: new, init, do, check, gate, fmt, fix, probe, build, interface, run. JSON by default."""
+"""jig command line: new, init, do, doc, check, gate, fmt, fix, probe, build, interface, run. JSON by default."""
 
 from __future__ import annotations
 
@@ -172,6 +172,21 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doc(args: argparse.Namespace) -> int:
+    from . import manual
+
+    if args.list:
+        print("Sections of the language reference (jig doc <word>):")
+        print(manual.listing())
+        return 0
+    text = manual.lookup(args.topic)
+    if text is None:
+        print(f"nothing in the reference matches '{args.topic}'; sections:\n{manual.listing()}", file=sys.stderr)
+        return 1
+    print(text)
+    return 0
+
+
 def cmd_gate(args: argparse.Namespace) -> int:
     """The quality gate for CI and pre-commit: every check, then the project's tests. Changes nothing."""
     import os
@@ -280,6 +295,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rounds", type=int, default=5, help="max attempts including repairs")
     p.add_argument("--yes", action="store_true", help="apply without asking once the checks pass")
     p.set_defaults(func=cmd_do)
+
+    p = sub.add_parser("doc", help="the language reference: jig doc, jig doc errors, jig doc T002, jig doc effects")
+    p.add_argument("topic", nargs="?", help="an error code, 'errors', or a word from a section heading")
+    p.add_argument("--list", action="store_true", help="list the reference's sections")
+    p.set_defaults(func=cmd_doc)
 
     p = sub.add_parser("probe", help="show what each pure function returns on edge-case inputs")
     p.add_argument("paths", nargs="+")

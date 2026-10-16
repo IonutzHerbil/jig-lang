@@ -55,7 +55,7 @@ def test_new_python_project_passes_the_gate(tmp_path):
 
 
 def test_gate_fails_on_a_bug_the_tests_miss(copy_of):
-    repo = copy_of("bench/repos/billing")
+    repo = copy_of("tests/fixtures/billing")
     with open(repo / "billing" / "reports.py", "a", encoding="utf-8") as f:
         f.write("\n\ndef owner_email(sub_id: str) -> str:\n    return store.get_customer(sub_id).mail\n")
     result = jig("gate", "--py", str(repo))
@@ -69,7 +69,7 @@ def hook(kind, event):
 
 
 def test_hooks_map_check_remember_and_gate(copy_of):
-    repo = copy_of("bench/repos/billing")
+    repo = copy_of("tests/fixtures/billing")
     (repo / ".jig").mkdir()
     (repo / ".jig" / "config.json").write_text('{"python": true}', encoding="utf-8")
 
@@ -93,3 +93,10 @@ def test_hooks_map_check_remember_and_gate(copy_of):
     hook("post", edit)  # instincts: the mistake was recorded and is shown to the next session
     learned = json.loads((repo / ".jig" / "instincts.json").read_text(encoding="utf-8"))
     assert any("has no field 'currency'" in k for k in learned)
+
+
+def test_doc_ships_the_reference_with_the_package():
+    assert jig("doc", "T002").stdout.startswith("T002 (Types): Mixing two newtypes")
+    assert "lib stripe" in jig("doc", "manifest").stdout
+    assert "Modules and imports" in jig("doc", "--list").stdout
+    assert jig("doc", "no-such-topic").returncode == 1

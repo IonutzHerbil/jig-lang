@@ -54,7 +54,7 @@ def test_third_party_packages_checked_against_the_real_package():
 
 
 def test_billing_codebase_is_clean():
-    ok, diags, _ = check(REPO / "bench" / "repos" / "billing", py=True, examples=False)
+    ok, diags, _ = check(FIXTURES / "billing", py=True, examples=False)
     assert ok, diags
 
 
