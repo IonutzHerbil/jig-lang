@@ -1,5 +1,0 @@
-{
-  "repo": "billing",
-  "kind": "feature + data model",
-  "request": "Add refunds: a new function refund_invoice(invoice_id: str, amount_cents: int) -> str in billing/payments.py. Only paid invoices can be refunded (raise InvalidChange otherwise). The amount must be positive, and all refunds of an invoice together can never exceed what was charged for it (InvalidChange). Refunds go through the gateway's refund function with the charge id from when the invoice was paid, so invoices now need to remember their charge id and how much has been refunded. Return the gateway's refund id."
-}

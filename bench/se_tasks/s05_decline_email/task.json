@@ -1,5 +1,0 @@
-{
-  "repo": "billing",
-  "kind": "integration",
-  "request": "When a card is declined during payment, email the customer that their payment failed: subject \"Payment failed for invoice <invoice id>\" and a body that includes the invoice total formatted in the customer's currency, the way the invoice email shows it. Payment must still fail exactly as today (the subscription goes past due and PaymentFailed is raised), and a problem sending the email must never hide the payment failure. Successful payments send no email."
-}

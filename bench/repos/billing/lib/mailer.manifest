@@ -1,7 +1,0 @@
-lib mailer
-
-exception MailError
-
-declare send(to: str, subject: str, body: str) -> str
-    effects: net
-    doc: "Send an email; returns the message id"

@@ -1,5 +1,0 @@
-{
-  "repo": "billing",
-  "kind": "requirement change",
-  "request": "Product decided new trial rules: TEAM plans get a 30-day trial, PRO plans keep 14 days, FREE and ENTERPRISE get no trial, and a customer who has ever had a subscription before (even a canceled one) gets no trial at all."
-}

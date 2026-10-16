@@ -1,5 +1,0 @@
-{
-  "repo": "billing",
-  "kind": "bugfix",
-  "request": "Bug report from customer support: German customers who use a coupon (for example WELCOME10) are overcharged on tax. Their invoices show more tax than 19% of what they actually pay before tax. Tax must be calculated on the amount after the coupon. Find the cause and fix it."
-}

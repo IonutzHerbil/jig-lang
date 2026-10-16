@@ -1,5 +1,0 @@
-{
-  "repo": "billing",
-  "kind": "dependency upgrade",
-  "request": "We upgraded the payment gateway client to v2 (lib/gateway.py) and its API changed. Update the billing code so payments behave exactly as before: a successful charge marks the invoice paid and returns the charge id, and a declined card still puts the subscription past due and raises PaymentFailed. Use the invoice id as the idempotency key."
-}
