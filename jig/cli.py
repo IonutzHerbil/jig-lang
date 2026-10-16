@@ -1,4 +1,4 @@
-"""jig command line: do, check, fmt, fix, probe, build, interface, run. JSON by default."""
+"""jig command line: new, init, do, check, gate, fmt, fix, probe, build, interface, run. JSON by default."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from .probes import render_probes, run_probes
 from .transpiler import build
 
 
-SKIP_DIRS = {".git", "node_modules", "build", "dist", ".venv", "venv", "__pycache__", "tests", "test"}
+SKIP_DIRS = {".git", "node_modules", "build", "dist", ".venv", "venv", "__pycache__", "tests", "test", ".jig", ".claude"}
 
 
 def discover(paths: list[str], py: bool = False) -> list[Path]:
@@ -30,7 +30,8 @@ def discover(paths: list[str], py: bool = False) -> list[Path]:
     for p in paths:
         path = Path(p)
         if path.is_dir():
-            found = sorted(path.rglob("*.jig"))
+            found = sorted(f for f in path.rglob("*.jig")
+                           if f.is_file() and not SKIP_DIRS & set(f.relative_to(path).parts[:-1]))
             if py:
                 found += sorted(f for f in path.rglob("*.py")
                                 if not SKIP_DIRS & set(f.relative_to(path).parts[:-1]) and not f.name.startswith("test_")
@@ -150,6 +151,51 @@ def cmd_probe(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_new(args: argparse.Namespace) -> int:
+    from .project import new
+
+    for line in new(Path(args.dir).resolve(), args.py):
+        print(line)
+    print(f"\nNext: cd {args.dir} and open it in Claude Code, or run `jig check{' --py' if args.py else ''} --pretty .`")
+    return 0
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    from .project import init, setup_claude
+
+    if args.user:
+        added = setup_claude(Path.home() / ".claude")
+        print(f"Claude Code: skill and hooks in {Path.home() / '.claude'}" + (f" (added {', '.join(added)})" if added else ""))
+        return 0
+    for line in init(Path(args.dir).resolve(), args.py):
+        print(line)
+    return 0
+
+
+def cmd_gate(args: argparse.Namespace) -> int:
+    """The quality gate for CI and pre-commit: every check, then the project's tests. Changes nothing."""
+    import os
+    import subprocess
+
+    root = Path(args.paths[0]).resolve() if len(args.paths) == 1 and Path(args.paths[0]).is_dir() else Path.cwd()
+    project, summary = check_project(args.paths, run_ex=True, py=args.py)
+    failed = not summary["ok"]
+    print(feedback_for_model(project) if failed else f"jig check: ok ({len(project.modules)} modules)")
+    tests = root / "tests"
+    if not args.no_tests and tests.is_dir():
+        p = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider", str(tests)],
+            cwd=root, env={**os.environ, "PYTHONPATH": str(root)}, capture_output=True, text=True,
+        )
+        lines = (p.stdout + p.stderr).strip().splitlines()
+        print("tests: " + (lines[-1] if lines else "no output"))
+        if p.returncode not in (0, 5):
+            failed = True
+            print("\n".join(lines[-40:]))
+    print("gate: " + ("FAILED" if failed else "passed"))
+    return 1 if failed else 0
+
+
 def cmd_do(args: argparse.Namespace) -> int:
     from .do import main as do_main
 
@@ -209,6 +255,23 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("interface", help="print the interface view (no bodies)")
     p.add_argument("paths", nargs="+")
     p.set_defaults(func=cmd_interface)
+
+    p = sub.add_parser("new", help="start a fresh project with Claude Code set up")
+    p.add_argument("dir")
+    p.add_argument("--py", action="store_true", help="a plain Python project checked by Jig, instead of .jig files")
+    p.set_defaults(func=cmd_new)
+
+    p = sub.add_parser("init", help="add Jig to an existing project: Claude Code skill and hooks, config")
+    p.add_argument("dir", nargs="?", default=".")
+    p.add_argument("--py", action="store_true", help="check the project's plain .py files")
+    p.add_argument("--user", action="store_true", help="set up Claude Code for every project on this machine")
+    p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("gate", help="CI / pre-commit gate: every check, then the project's tests; changes nothing")
+    p.add_argument("paths", nargs="*", default=["."])
+    p.add_argument("--py", action="store_true", help="also check .py source files")
+    p.add_argument("--no-tests", action="store_true", help="skip running tests/")
+    p.set_defaults(func=cmd_gate)
 
     p = sub.add_parser("do", help="implement a feature request with an LLM, verified before it is applied")
     p.add_argument("request", help='what you want, e.g. "add loyalty points: 1 per 100 cents spent"')

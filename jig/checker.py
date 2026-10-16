@@ -10,6 +10,8 @@ Loads every module of a project, then checks:
 from __future__ import annotations
 
 import ast
+import difflib
+import functools
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -104,6 +106,7 @@ class ModuleInfo:
     enums: dict[str, list[str]] = field(default_factory=dict)
     newtypes: dict[str, str] = field(default_factory=dict)
     constants: dict[str, ast.AnnAssign | ast.Assign] = field(default_factory=dict)
+    toplevel: list[ast.stmt] = field(default_factory=list)  # module-level code in a .py file, checked as written
     py_records: set[str] = field(default_factory=set)  # @dataclass classes: records built the Python way
     classes: set[str] = field(default_factory=set)  # rejected classes, kept as names so uses do not cascade
 
@@ -152,12 +155,60 @@ def pyclass_has(cls: type, attr: str) -> bool:
 
 
 def stdlib_module(name: str) -> Any | None:
-    """The real module for an importable stdlib name (or a submodule of one), else None."""
-    if name not in std.STDLIB and name not in std.STDLIB_EFFECTS:
-        return None
+    """The real module behind an import: the standard library, or an installed third-party package.
+
+    A third-party package counts only when it is installed in site-packages, so project code is never mistaken
+    for one. Its names, attributes and call signatures are then checked against the package itself."""
     import importlib
 
-    return importlib.import_module(name)
+    top = name.split(".")[0]
+    if name in std.STDLIB or name in std.STDLIB_EFFECTS:
+        return importlib.import_module(name)
+    if top in ("std", "lib") or name in std.STDLIB_UNSUPPORTED or top in std.STDLIB_UNSUPPORTED:
+        return None
+    return _installed(name)
+
+
+@functools.lru_cache(maxsize=None)
+def _installed(name: str) -> Any | None:
+    import importlib
+    import importlib.util
+
+    try:
+        spec = importlib.util.find_spec(name.split(".")[0])
+    except (ImportError, ValueError):
+        return None
+    if spec is None or not spec.origin or not {"site-packages", "dist-packages"} & set(Path(spec.origin).parts):
+        return None
+    try:
+        return importlib.import_module(name)
+    except Exception:
+        return None
+
+
+def call_problem(obj: Any, node: ast.Call, bound_self: bool = False) -> str | None:
+    """Why a call cannot match obj's real signature (wrong count, unknown keyword), or None if it can or
+    the signature is unknown."""
+    import inspect
+
+    if any(isinstance(a, ast.Starred) for a in node.args) or any(kw.arg is None for kw in node.keywords):
+        return None
+    try:
+        sig = inspect.signature(obj)
+    except (TypeError, ValueError):
+        return None
+    args = [None] * (len(node.args) + (1 if bound_self else 0))
+    try:
+        sig.bind(*args, **{kw.arg: None for kw in node.keywords})
+    except TypeError as e:
+        names = [n for n in sig.parameters if n != "self"]
+        shown = ", ".join(names[:10]) + (f", ... ({len(names) - 10} more)" if len(names) > 10 else "")
+        hint = ""
+        if m := re.search(r"unexpected keyword argument '(\w+)'", str(e)):
+            close = difflib.get_close_matches(m.group(1), names, n=1, cutoff=0.6)
+            hint = f"; did you mean '{close[0]}'?" if close else ""
+        return f"{e}{hint}. Parameters: {getattr(obj, '__name__', 'it')}({shown})"
+    return None
 
 
 def public_names(module: Any) -> list[str]:
@@ -339,7 +390,7 @@ class Project:
             target_mod, target_name, _ = mod.imports[name]
             if target_mod in std.STD:
                 return ("std", target_mod, target_name) if target_name in std.STD[target_mod] else None
-            if (pymod := stdlib_module(target_mod)) is not None:
+            if target_mod not in self.modules and (pymod := stdlib_module(target_mod)) is not None:
                 return ("py", target_mod, target_name) if hasattr(pymod, target_name) else None
             manifest = self.manifests.get(target_mod[4:]) if target_mod.startswith("lib.") else None
             if manifest is not None:
@@ -350,8 +401,8 @@ class Project:
         return None
 
     def type_desc(self, mod: ModuleInfo, name: str) -> tuple | None:
-        if name in ("int", "float"):
-            return ("prim", name)  # a plain number: mixing it with a newtype is T002
+        if name in ("int", "float", "str"):
+            return ("prim", name)  # a plain value: mixing it with a newtype is T002; its attributes are checked
         r = self.resolve(mod, name)
         if r is None:
             return None
@@ -480,10 +531,11 @@ class Project:
                     mod.classes.add(stmt.name)
                 else:
                     mod.classes.add(stmt.name)
-                    self.diag(
-                        "F003", "classes with behavior are not supported: use a @dataclass (or record) for the data and "
-                        "functions that take it for the behavior; Enum subclasses work", mod, stmt.lineno,
-                    )
+                    if not mod.file.endswith(".py"):
+                        self.diag(
+                            "F003", "classes with behavior are not supported: use a @dataclass (or record) for the "
+                            "data and functions that take it for the behavior; Enum subclasses work", mod, stmt.lineno,
+                        )
             elif isinstance(stmt, ast.FunctionDef):
                 claim(stmt.name, stmt)
                 mod.functions[stmt.name] = self._collect_function(mod, stmt)
@@ -522,6 +574,8 @@ class Project:
             elif isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
                 claim(stmt.targets[0].id, stmt)
                 mod.constants[stmt.targets[0].id] = stmt
+            elif mod.file.endswith(".py"):
+                mod.toplevel.append(stmt)  # `if __name__ == "__main__":`, setup calls, ...
             else:
                 self.diag("S005", "only declarations are allowed at module level", mod, stmt.lineno)
 
@@ -740,7 +794,7 @@ class Project:
                 self._unknown_module(mod, m, line)
 
         for local, (m, n, line) in mod.imports.items():
-            if (pymod := stdlib_module(m)) is not None:
+            if m not in self.modules and (pymod := stdlib_module(m)) is not None:
                 if not hasattr(pymod, n):
                     fix, cands = replace_fix(n, public_names(pymod))
                     self.diag("R003", f"'{m}' has no export '{n}'", mod, line, context={"candidates": cands}, fix=fix)
@@ -795,6 +849,10 @@ class Project:
             if checker.used_effects and not mod.file.endswith(".py"):
                 self.diag("E004", f"constant '{name}' must be pure; it uses {sorted(checker.used_effects)}", mod, node.lineno)
 
+        if mod.toplevel:
+            checker = BodyChecker(self, mod, None, _bound_names(mod.toplevel), {})
+            for stmt in mod.toplevel:
+                checker.visit(stmt)
         for fi in mod.functions.values():
             self._check_function(mod, fi)
 
@@ -1226,6 +1284,12 @@ class BodyChecker(ast.NodeVisitor):
                         context={"newtype": nt, "base": prim},
                         fix={"kind": "replace_token", "from": f"{ast.unparse(node.value)}.{node.attr}", "to": f"{prim}({ast.unparse(node.value)})", "confidence": "medium"},
                     )
+            elif kind == "prim":
+                pytype = {"int": int, "float": float, "str": str}[base[1]]
+                if not node.attr.startswith("_") and not hasattr(pytype, node.attr):
+                    fix, cands = replace_fix(node.attr, [a for a in dir(pytype) if not a.startswith("_")])
+                    hint = " (looping over a dict gives its keys: use .values() or .items())" if base[1] == "str" else ""
+                    self.err("R002", f"{base[1]} has no attribute '{node.attr}'{hint}", node, context={"candidates": cands}, fix=fix)
             elif kind == "projmod":
                 target = base[1]
                 if node.attr not in target.global_names() and f"{target.name}.{node.attr}" not in self.p.modules:
@@ -1273,7 +1337,28 @@ class BodyChecker(ast.NodeVisitor):
 
     # -- calls
 
+    def _check_py_call(self, node: ast.Call) -> None:
+        f, obj, label, bound = node.func, None, "", False
+        if isinstance(f, ast.Name) and f.id not in self.locals:
+            r = self.p.resolve(self.mod, f.id)
+            if r and r[0] == "py":
+                obj, label = getattr(stdlib_module(r[1]), r[2], None), f"{r[1]}.{r[2]}"
+        elif isinstance(f, ast.Attribute):
+            base = self.type_of(f.value)
+            if base and base[0] == "pymod":
+                obj, label = getattr(stdlib_module(base[1]), f.attr, None), f"{base[1]}.{f.attr}"
+            elif base and base[0] == "pyinst":
+                cls = getattr(stdlib_module(base[1]), base[2], None)
+                obj, label, bound = getattr(cls, f.attr, None), f"{base[2]}.{f.attr}", True
+                import inspect
+
+                if obj is not None and not inspect.isfunction(obj):
+                    obj = None  # C methods and descriptors: no reliable signature with self
+        if obj is not None and callable(obj) and (problem := call_problem(obj, node, bound)):
+            self.err("T006", f"'{label}': {problem}", node)
+
     def visit_Call(self, node: ast.Call) -> None:
+        self._check_py_call(node)
         f = node.func
         if isinstance(f, ast.Attribute) and (owner := self.type_of(f.value)) and owner[0] == "projmod":
             r = self.p.resolve(owner[1], f.attr)

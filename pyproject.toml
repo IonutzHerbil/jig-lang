@@ -12,6 +12,7 @@ dependencies = []
 
 [project.optional-dependencies]
 xai = ["scikit-learn>=1.5", "shap>=0.46", "lime>=0.2"]
+dev = ["pytest>=8"]
 
 [project.scripts]
 jig = "jig.cli:main"
@@ -21,3 +22,7 @@ packages = ["jig"]
 
 [tool.setuptools.package-data]
 jig = ["cards/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
