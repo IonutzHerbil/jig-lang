@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
 
+[project.optional-dependencies]
+xai = ["scikit-learn>=1.5", "shap>=0.46", "lime>=0.2"]
+
 [project.scripts]
 jig = "jig.cli:main"
 

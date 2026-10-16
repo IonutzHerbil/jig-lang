@@ -18,3 +18,4 @@ env/
 build_*/
 *.vsix
 bench/results/
+bench/explain.html
