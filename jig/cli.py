@@ -175,15 +175,18 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_doc(args: argparse.Namespace) -> int:
     from . import manual
 
-    if args.list:
-        print("Sections of the language reference (jig doc <word>):")
-        print(manual.listing())
-        return 0
     text = manual.lookup(args.topic)
     if text is None:
-        print(f"nothing in the reference matches '{args.topic}'; sections:\n{manual.listing()}", file=sys.stderr)
+        print(f"no topic '{args.topic}'. Topics: {manual.topic_names()}; or an error code such as T002.",
+              file=sys.stderr)
         return 1
-    print(text)
+    out = text if args.raw else manual.render(text, color=manual.use_color())
+    try:
+        out.encode(sys.stdout.encoding or "utf-8")
+    except UnicodeEncodeError:  # a console code page without these symbols
+        out = out.translate(str.maketrans({"✓": "+", "✗": "x", "—": "-", "…": "..."}))
+        sys.stdout.reconfigure(errors="replace")
+    print(out)
     return 0
 
 
@@ -296,9 +299,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--yes", action="store_true", help="apply without asking once the checks pass")
     p.set_defaults(func=cmd_do)
 
-    p = sub.add_parser("doc", help="the language reference: jig doc, jig doc errors, jig doc T002, jig doc effects")
-    p.add_argument("topic", nargs="?", help="an error code, 'errors', or a word from a section heading")
-    p.add_argument("--list", action="store_true", help="list the reference's sections")
+    p = sub.add_parser("doc", help="the language reference: jig doc, jig doc types, jig doc errors, jig doc T002")
+    p.add_argument("topic", nargs="?", help="a topic (jig doc lists them), 'errors', an error code, or 'all'")
+    p.add_argument("--raw", action="store_true", help="print the Markdown source instead")
     p.set_defaults(func=cmd_doc)
 
     p = sub.add_parser("probe", help="show what each pure function returns on edge-case inputs")

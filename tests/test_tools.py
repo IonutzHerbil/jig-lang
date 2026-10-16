@@ -95,8 +95,10 @@ def test_hooks_map_check_remember_and_gate(copy_of):
     assert any("has no field 'currency'" in k for k in learned)
 
 
-def test_doc_ships_the_reference_with_the_package():
-    assert jig("doc", "T002").stdout.startswith("T002 (Types): Mixing two newtypes")
-    assert "lib stripe" in jig("doc", "manifest").stdout
-    assert "Modules and imports" in jig("doc", "--list").stdout
+def test_doc_renders_the_reference_for_a_terminal():
+    overview = jig("doc").stdout
+    assert "jig new myapp" in overview and "records" in overview and "`" not in overview
+    assert jig("doc", "T002").stdout.startswith("T002: TYPES")
+    assert "lib stripe" in jig("doc", "manifests").stdout
+    assert "```" in jig("doc", "records", "--raw").stdout
     assert jig("doc", "no-such-topic").returncode == 1

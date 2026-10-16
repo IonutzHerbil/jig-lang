@@ -156,7 +156,7 @@ Full reference: [LANGUAGE.md](jig/docs/LANGUAGE.md), or `jig doc` offline. Every
 | `jig fmt <paths>` | canonical formatting of `.jig` files |
 | `jig build <paths> -o <dir>` | check, then write a plain Python package |
 | `jig run <paths> --entry module.function` | check, build, and call an entry point |
-| `jig doc [topic]` | the language reference: `jig doc`, `jig doc errors`, `jig doc T002`, `jig doc effects`, `jig doc --list` |
+| `jig doc [topic]` | the language reference in the terminal: `jig doc` (overview and topics), `jig doc types`, `jig doc errors`, `jig doc T002`, `jig doc all` |
 
 ## Use it from Claude Code
 

@@ -6,7 +6,7 @@ checked mechanically: a program that passes `jig check` has no invented names, f
 library functions, or standard-library APIs, no newtype mix-ups, and no undeclared side effects. It
 transpiles to plain Python with zero dependencies.
 
-Error codes are listed in [ERROR_CODES.md](ERROR_CODES.md).
+Every error code: `jig doc errors`; one code: `jig doc T002`.
 
 ## Modules and imports
 
@@ -229,10 +229,15 @@ Reference material for the model writing code. Not checked.
 
 | Command | Does |
 | --- | --- |
-| `jig check <paths> [--pretty \| --for-model] [--no-examples]` | all checks, then runs examples; JSON by default; exit 1 on errors |
-| `jig fix <paths> [--check]` | `fmt`, if/elif chains to `match` (D003), missing imports and module paths when unambiguous |
+| `jig new <dir> [--py]` | start a project, with Claude Code set up |
+| `jig init [dir] [--py] [--user]` | add Jig and the Claude Code hooks to an existing project, or to every project |
+| `jig check <paths> [--py] [--pretty \| --for-model] [--no-examples]` | every check, then the examples; JSON by default; exit 1 on errors |
+| `jig gate [paths] [--py]` | checks, then the project's tests; changes nothing (CI, before committing) |
+| `jig run <paths> --entry module.function` | check, build, and call the entry, with a real `Ctx` if it takes one |
+| `jig fix <paths> [--check]` | formatting, if/elif chains to `match` (D003), missing imports and module paths when unambiguous |
 | `jig fmt <paths> [--check]` | canonical formatting (spaces, no trailing whitespace, sorted imports) |
-| `jig probe <paths>` | what each pure function returns on edge-case inputs (`""`, `0`, `-1`, `[]`), to compare with the request |
-| `jig interface <paths>` | signatures, effects (declared or inferred), contracts, and examples without bodies |
-| `jig build <paths> -o <dir>` | check, then write a Python package plus `jig_runtime.py` |
-| `jig run <paths> --entry module.function` | check, build, and call the entry with a real `Ctx` if it takes one |
+| `jig do "<request>"` | an AI implements the request, checked, and asks before applying (`GEMINI_API_KEY`) |
+| `jig probe <paths>` | what each pure function returns on edge inputs (`""`, `0`, `-1`, `[]`) |
+| `jig interface <paths>` | signatures, effects, contracts and examples, without bodies |
+| `jig build <paths> -o <dir>` | check, then write a plain Python package plus `jig_runtime.py` |
+| `jig doc [topic]` | this reference: `jig doc types`, `jig doc errors`, `jig doc T002` |
