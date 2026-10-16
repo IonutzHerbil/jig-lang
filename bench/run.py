@@ -137,9 +137,23 @@ def py_stub(source: str) -> str:
     return ast.unparse(tree) + "\n"
 
 
-def project_context(name: str, lang: str) -> str:
-    """The project files a developer (or model) would have open, as one prompt section."""
+def project_context(name: str, lang: str, partial: bool = False) -> str:
+    """The project files a developer (or model) would have open, as one prompt section.
+
+    partial: like an agent in a codebase too big for its context, the model sees only the shared types
+    module plus the names of the other modules and libraries; the same for both languages.
+    """
     base = ROOT / "projects" / name / lang
+    if partial:
+        ext = "jig" if lang == "jig" else "py"
+        types = next(base.glob(f"*/types.{ext}"))
+        others = sorted(
+            f.relative_to(base).with_suffix("").as_posix().replace("/", ".")
+            for f in [*base.rglob(f"*.{ext}"), *base.glob("lib/*.manifest")]
+            if f != types
+        )
+        return (f"### {types.relative_to(base).as_posix()}\n{types.read_text(encoding='utf-8')}\n\n"
+                f"Other modules and libraries in the project (not shown): {', '.join(dict.fromkeys(others))}")
     if lang == "jig":
         files = sorted(base.rglob("*.jig")) + sorted(base.glob("lib/*.manifest")) + sorted(base.glob(".decisions/*"))
         shown = {f: f.read_text(encoding="utf-8") for f in files}
@@ -220,7 +234,7 @@ def same(actual, expect) -> bool:
     return actual == expect
 
 
-def run_sample(model, task_dir: Path, task: dict, cond: str, rounds: int) -> dict:
+def run_sample(model, task_dir: Path, task: dict, cond: str, rounds: int, partial: bool = False) -> dict:
     lang = cond.split("-")[0]
     cases = json.loads((task_dir / "tests.json").read_text(encoding="utf-8"))
     module = task.get("module", "solution")
@@ -230,7 +244,7 @@ def run_sample(model, task_dir: Path, task: dict, cond: str, rounds: int) -> dic
     if not project and any(c["expect"] == "error" for c in cases):
         prompt += ERROR_STYLE[lang] + "\n"
     if project:
-        prompt = f"You are adding a module to this existing project:\n\n{project_context(project, lang)}\n\n{prompt}"
+        prompt = f"You are adding a module to this existing project:\n\n{project_context(project, lang, partial)}\n\n{prompt}"
     if lang == "jig":
         system = ("You write Jig, a Python-shaped language checked by a strict compiler. Its reference follows.\n\n"
                   + MANUALS[cond] + (("\n\n" + PROJECT_MANUAL) if project and cond == "jig-short" else "")
@@ -291,6 +305,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--rpm", type=int, default=8, help="requests per minute (free tier is about 10)")
     ap.add_argument("--resume", help="a results file from an interrupted run: skip its samples, append the rest")
+    ap.add_argument("--context", choices=("full", "partial"), default="full",
+                    help="project tasks: show every file (full), or only the types module and module names (partial)")
     args = ap.parse_args(argv)
 
     model = make_model(args.model, args.temperature, args.rpm)
@@ -310,11 +326,12 @@ def main(argv: list[str] | None = None) -> int:
             task = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
             for cond in args.conditions.split(","):
                 for k in range(args.samples):
-                    if (task_dir.name, cond, k) in done:
+                    if (task_dir.name, cond + ("@partial" if args.context == "partial" else ""), k) in done:
                         continue
                     t0 = time.monotonic()
-                    rec = run_sample(model, task_dir, task, cond, args.rounds)
-                    rec.update(task=task_dir.name, domain=task["domain"], cond=cond, sample=k,
+                    rec = run_sample(model, task_dir, task, cond, args.rounds, partial=args.context == "partial")
+                    label = cond + ("@partial" if args.context == "partial" else "")
+                    rec.update(task=task_dir.name, domain=task["domain"], cond=label, sample=k,
                                model=args.model, temperature=args.temperature, seconds=round(time.monotonic() - t0, 1))
                     f.write(json.dumps(rec) + "\n")
                     f.flush()
