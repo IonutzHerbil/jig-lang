@@ -141,6 +141,7 @@ def preprocess(text: str, file: str) -> tuple[Preprocessed, list[Diagnostic]]:
     state: str | None = None
     def_stack: list[tuple[int, int]] = []  # (indent, def line)
     examples_ctx: tuple[int, int] | None = None  # (def line, indent of 'examples:')
+    header_checked = False
 
     def diag(code: str, msg: str, line: int, col: int = 0) -> None:
         diags.append(Diagnostic(code, msg, file, line, col))
@@ -177,17 +178,21 @@ def preprocess(text: str, file: str) -> tuple[Preprocessed, list[Diagnostic]]:
             while def_stack and indent <= def_stack[-1][0]:
                 def_stack.pop()
 
-        # module header
-        if pre.module is None and code:
+        # module header (a .py file may omit it: its name comes from its path)
+        if pre.module is None and code and not header_checked:
+            header_checked = True
             m = MODULE_RE.fullmatch(code)
             if m and indent == 0:
                 pre.module, pre.module_line = m.group(1), idx
-            else:
+                out.append("")
+                state = new_state
+                continue
+            if not file.endswith(".py"):
                 diag("S001", "a Jig file must start with 'module <name>'", idx)
                 pre.module, pre.module_line = "", idx
-            out.append("")
-            state = new_state
-            continue
+                out.append("")
+                state = new_state
+                continue
 
         if indent == 0 and code:
             m = NEWTYPE_RE.fullmatch(code)

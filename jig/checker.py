@@ -44,8 +44,6 @@ FORBIDDEN_NODES: dict[type, tuple[str, str]] = {
     ast.AsyncWith: ("S006", "async is not supported yet"),
     ast.Await: ("S006", "async is not supported yet"),
     ast.With: ("S006", "'with' is not supported; files and connections go through a lib manifest"),
-    ast.Yield: ("S006", "generators are not supported yet; return a list"),
-    ast.YieldFrom: ("S006", "generators are not supported yet; return a list"),
 }
 
 
@@ -86,6 +84,8 @@ class FuncInfo:
     requires: list[Clause] = field(default_factory=list)
     ensures: list[Clause] = field(default_factory=list)
     examples: list[Example] = field(default_factory=list)
+    varargs: bool = False
+    varkw: bool = False
     example_imports: set[str] = field(default_factory=set)  # names examples use without the module importing them
     docstring: str | None = None
 
@@ -104,17 +104,56 @@ class ModuleInfo:
     enums: dict[str, list[str]] = field(default_factory=dict)
     newtypes: dict[str, str] = field(default_factory=dict)
     constants: dict[str, ast.AnnAssign | ast.Assign] = field(default_factory=dict)
+    py_records: set[str] = field(default_factory=set)  # @dataclass classes: records built the Python way
+    classes: set[str] = field(default_factory=set)  # rejected classes, kept as names so uses do not cascade
 
     def declared_names(self) -> set[str]:
-        return set(self.functions) | set(self.records) | set(self.enums) | set(self.newtypes) | set(self.constants)
+        return set(self.functions) | set(self.records) | set(self.enums) | set(self.newtypes) | set(self.constants) | self.classes
 
     def global_names(self) -> set[str]:
         return self.declared_names() | set(self.imports) | set(self.pymods)
 
 
+def module_name_for(path: Path) -> str:
+    """A Python module's dotted name: its path from the first ancestor that is not a package (no __init__.py)."""
+    path = path.resolve()
+    parts = [] if path.stem == "__init__" else [path.stem]
+    d = path.parent
+    while (d / "__init__.py").exists():
+        parts.insert(0, d.name)
+        d = d.parent
+    return ".".join(parts) or path.parent.name
+
+
+def stdlib_effect(module: str, name: str | None) -> str | None:
+    """The effect of using `name` from stdlib `module` (or the module itself), if any."""
+    top = module.split(".")[0]
+    effect = std.STDLIB_EFFECTS.get(module) or std.STDLIB_EFFECTS.get(top)
+    if effect and name in std.STDLIB_PURE_NAMES.get(module, ()):
+        return None
+    return effect
+
+
+def pyclass_has(cls: type, attr: str) -> bool:
+    """Whether instances of a stdlib class can have attr: on the class, or set as self.<attr> in its source."""
+    if hasattr(cls, attr):
+        return True
+    import inspect
+
+    for k in cls.__mro__:
+        if k is object:
+            continue
+        try:
+            if re.search(rf"\bself\.{re.escape(attr)}\s*[:=]", inspect.getsource(k)):
+                return True
+        except (OSError, TypeError):
+            continue  # implemented in C: its attributes are all on the class
+    return False
+
+
 def stdlib_module(name: str) -> Any | None:
     """The real module for an importable stdlib name (or a submodule of one), else None."""
-    if name not in std.STDLIB:
+    if name not in std.STDLIB and name not in std.STDLIB_EFFECTS:
         return None
     import importlib
 
@@ -158,6 +197,10 @@ def _return_base(fi: FuncInfo | None) -> str | None:
 def _listing(names: Iterable[str], limit: int = 25) -> str:
     names = sorted(names)
     return ", ".join(names[:limit]) + (f", ... ({len(names) - limit} more)" if len(names) > limit else "")
+
+
+def _unpacks(node: ast.Call) -> bool:
+    return any(isinstance(a, ast.Starred) for a in node.args) or any(kw.arg is None for kw in node.keywords)
 
 
 def _element(t: tuple | None) -> tuple | None:
@@ -246,14 +289,14 @@ class Project:
         for path in files:
             text = Path(path).read_text(encoding="utf-8")
             pre, pdiags = preprocess(text, str(path))
-            name = pre.module or Path(path).stem
+            name = pre.module or module_name_for(Path(path))
             mod = ModuleInfo(name=name, file=str(path), text=text, pre=pre)
             for d in pdiags:
                 d.module = name
             self.diags.extend(pdiags)
 
             formatted = format_source(text)
-            if formatted != text:
+            if formatted != text and not str(path).endswith(".py"):
                 self.diag(
                     "D001",
                     "file is not in canonical form",
@@ -288,6 +331,7 @@ class Project:
             ("enum", mod.enums),
             ("newtype", mod.newtypes),
             ("constant", mod.constants),
+            ("class", mod.classes),
         ):
             if name in table:
                 return (kind, mod, name)
@@ -317,6 +361,8 @@ class Project:
             return ("ctx",)
         if r[0] == "lib" and r[2] in r[1].records:
             return ("librecord", r[1], r[2])
+        if r[0] == "py" and isinstance(getattr(stdlib_module(r[1]), r[2], None), type):
+            return ("pyinst", r[1], r[2])
         return None
 
     def ann_type(self, mod: ModuleInfo, ann: ast.expr | None) -> tuple | None:
@@ -411,7 +457,10 @@ class Project:
                     else:
                         local = alias.asname or alias.name
                         claim(local, stmt)
-                        mod.imports[local] = (stmt.module or "", alias.name, stmt.lineno)
+                        if f"{stmt.module}.{alias.name}" in self.modules:
+                            mod.pymods[local] = (f"{stmt.module}.{alias.name}", stmt.lineno)
+                        else:
+                            mod.imports[local] = (stmt.module or "", alias.name, stmt.lineno)
             elif isinstance(stmt, ast.Import):
                 for alias in stmt.names:
                     local = alias.asname or alias.name.split(".")[0]
@@ -423,8 +472,18 @@ class Project:
                     self._collect_record(mod, stmt)
                 elif stmt.name in mod.pre.enums:
                     self._collect_enum(mod, stmt)
+                elif self._is_dataclass(mod, stmt):
+                    self._collect_dataclass(mod, stmt)
+                elif self._is_enum_class(mod, stmt):
+                    self._collect_enum_class(mod, stmt)
+                elif self._is_exception_class(mod, stmt):
+                    mod.classes.add(stmt.name)
                 else:
-                    self.diag("F003", "classes are not allowed; use 'record' for data and functions for behavior", mod, stmt.lineno)
+                    mod.classes.add(stmt.name)
+                    self.diag(
+                        "F003", "classes with behavior are not supported: use a @dataclass (or record) for the data and "
+                        "functions that take it for the behavior; Enum subclasses work", mod, stmt.lineno,
+                    )
             elif isinstance(stmt, ast.FunctionDef):
                 claim(stmt.name, stmt)
                 mod.functions[stmt.name] = self._collect_function(mod, stmt)
@@ -466,6 +525,85 @@ class Project:
             else:
                 self.diag("S005", "only declarations are allowed at module level", mod, stmt.lineno)
 
+    def _decorator_name(self, mod: ModuleInfo, d: ast.expr) -> str | None:
+        target = d.func if isinstance(d, ast.Call) else d
+        if isinstance(target, ast.Name):
+            r = self.resolve(mod, target.id)
+            return f"{r[1]}.{r[2]}" if r and r[0] == "py" else None
+        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id in mod.pymods:
+            return f"{mod.pymods[target.value.id][0]}.{target.attr}"
+        return None
+
+    def _is_exception_class(self, mod: ModuleInfo, node: ast.ClassDef, depth: int = 0) -> bool:
+        """Whether a class derives from an exception: a builtin one, a library's, or a project class that does."""
+        import builtins
+
+        for b in node.bases:
+            name = b.id if isinstance(b, ast.Name) else None
+            if name is None or depth > 10:
+                continue
+            builtin = getattr(builtins, name, None)
+            if isinstance(builtin, type) and issubclass(builtin, BaseException):
+                return True
+            owner, target = mod, name
+            if name in mod.imports:
+                m, target, _ = mod.imports[name]
+                if m.startswith("lib.") and m[4:] in self.manifests:
+                    if target in self.manifests[m[4:]].exceptions:
+                        return True
+                    continue
+                owner = self.modules.get(m)
+            if owner is None or owner.tree is None:
+                continue
+            cls = next((s for s in owner.tree.body if isinstance(s, ast.ClassDef) and s.name == target), None)
+            if cls is not None and self._is_exception_class(owner, cls, depth + 1):
+                return True
+        return False
+
+    def _is_dataclass(self, mod: ModuleInfo, node: ast.ClassDef) -> bool:
+        return any(self._decorator_name(mod, d) == "dataclasses.dataclass" for d in node.decorator_list)
+
+    def _is_enum_class(self, mod: ModuleInfo, node: ast.ClassDef) -> bool:
+        for b in node.bases:
+            name = None
+            if isinstance(b, ast.Name):
+                r = self.resolve(mod, b.id)
+                name = f"{r[1]}.{r[2]}" if r and r[0] == "py" else None
+            elif isinstance(b, ast.Attribute) and isinstance(b.value, ast.Name) and b.value.id in mod.pymods:
+                name = f"{mod.pymods[b.value.id][0]}.{b.attr}"
+            if name in ("enum.Enum", "enum.IntEnum", "enum.StrEnum"):
+                return True
+        return False
+
+    def _collect_dataclass(self, mod: ModuleInfo, node: ast.ClassDef) -> None:
+        fields: dict[str, tuple[ast.expr, bool]] = {}
+        for i, s in enumerate(node.body):
+            if i == 0 and _is_docstring(s):
+                continue
+            if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name):
+                fields[s.target.id] = (s.annotation, s.value is not None)
+            elif isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.diag("F003", f"methods are not supported: write '{s.name}' as a function that takes a {node.name}",
+                          mod, s.lineno)
+            else:
+                self.diag("S006", "a dataclass may only contain typed fields: name: type", mod, s.lineno)
+        mod.records[node.name] = fields
+        mod.py_records.add(node.name)
+
+    def _collect_enum_class(self, mod: ModuleInfo, node: ast.ClassDef) -> None:
+        variants: list[str] = []
+        for i, s in enumerate(node.body):
+            if i == 0 and _is_docstring(s):
+                continue
+            if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name):
+                variants.append(s.targets[0].id)
+            elif isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.diag("F003", f"methods are not supported: write '{s.name}' as a function that takes a {node.name}",
+                          mod, s.lineno)
+            else:
+                self.diag("S006", "an Enum may only list variants: NAME = value", mod, s.lineno)
+        mod.enums[node.name] = variants
+
     def _collect_record(self, mod: ModuleInfo, node: ast.ClassDef) -> None:
         if node.bases or node.decorator_list or node.keywords:
             self.diag("S006", "records cannot have bases or decorators", mod, node.lineno)
@@ -500,7 +638,8 @@ class Project:
         params = [x.arg for x in positional + a.kwonlyargs]
         defaulted = {x.arg for x in positional[len(positional) - len(a.defaults) :]} if a.defaults else set()
         defaulted |= {x.arg for x, d in zip(a.kwonlyargs, a.kw_defaults) if d is not None}
-        fi = FuncInfo(name=node.name, node=node, params=params, required=set(params) - defaulted)
+        fi = FuncInfo(name=node.name, node=node, params=params, required=set(params) - defaulted,
+                      varargs=a.vararg is not None, varkw=a.kwarg is not None)
         if node.body and _is_docstring(node.body[0]):
             fi.docstring = node.body[0].value.value  # type: ignore[attr-defined]
 
@@ -587,9 +726,9 @@ class Project:
 
     def _unknown_module(self, mod: ModuleInfo, m: str, line: int) -> None:
         top = m.split(".")[0]
-        hint = std.STDLIB_EFFECTFUL.get(m) or std.STDLIB_EFFECTFUL.get(top)
+        hint = std.STDLIB_UNSUPPORTED.get(m) or std.STDLIB_UNSUPPORTED.get(top)
         if hint:
-            self.diag("R003", f"module '{m}' has effects Jig tracks another way: {hint}", mod, line, context={"module": m})
+            self.diag("R003", f"module '{m}' cannot be used: {hint}", mod, line, context={"module": m})
             return
         fix, cands = replace_fix(m, [*std.STD, *std.STDLIB, *self.modules, *(f"lib.{k}" for k in self.manifests)])
         known = [*self.modules, *(f"lib.{k}" for k in self.manifests)]
@@ -597,7 +736,7 @@ class Project:
 
     def _check_module(self, mod: ModuleInfo) -> None:
         for local, (m, line) in mod.pymods.items():
-            if stdlib_module(m) is None:
+            if stdlib_module(m) is None and m not in self.modules:
                 self._unknown_module(mod, m, line)
 
         for local, (m, n, line) in mod.imports.items():
@@ -653,13 +792,15 @@ class Project:
                 checker.visit(node.annotation)
             if node.value is not None:
                 checker.visit(node.value)
-            if checker.used_effects:
+            if checker.used_effects and not mod.file.endswith(".py"):
                 self.diag("E004", f"constant '{name}' must be pure; it uses {sorted(checker.used_effects)}", mod, node.lineno)
 
         for fi in mod.functions.values():
             self._check_function(mod, fi)
 
     def _naming(self, mod: ModuleInfo, name: str, rule: str, line: int | None = None) -> None:
+        if mod.file.endswith(".py"):
+            return  # Python projects keep their own naming conventions
         self.diag("S003", f"'{name}': {rule}", mod, line or mod.pre.module_line)
 
     def _check_function(self, mod: ModuleInfo, fi: FuncInfo) -> None:
@@ -671,13 +812,9 @@ class Project:
 
         if not SNAKE.match(fn):
             err("S003", f"'{fn}': functions use snake_case", node.lineno, node.col_offset)
-        for d in node.decorator_list:
-            err("F004", "decorators are not supported in v0", d.lineno, d.col_offset)
 
         a = node.args
         all_args = a.posonlyargs + a.args + a.kwonlyargs
-        if a.vararg or a.kwarg:
-            err("F012", "*args and **kwargs are not allowed; declare each parameter with a type", node.lineno)
         for arg in all_args:
             if arg.annotation is None:
                 err("T004", f"parameter '{arg.arg}' has no type, so calls to '{fn}' are checked less", arg.lineno, arg.col_offset, severity="warning", fix={"kind": "insert_annotation", "hint": f"{arg.arg}: <type>"})
@@ -749,7 +886,10 @@ class Project:
             t = self.ann_type(mod, arg.annotation)
             if t:
                 var_types[arg.arg] = t
-        checker = BodyChecker(self, mod, fi, set(fi.params) | _bound_names(body), var_types, silent=silent)
+        star = {x.arg for x in (a.vararg, a.kwarg) if x is not None}
+        checker = BodyChecker(self, mod, fi, set(fi.params) | star | _bound_names(body), var_types, silent=silent)
+        for d in node.decorator_list:
+            checker.visit(d)
         for arg in all_args:
             if arg.annotation is not None:
                 checker.visit(arg.annotation)
@@ -822,7 +962,8 @@ class BodyChecker(ast.NodeVisitor):
             if r and r[0] == "constant":
                 return self.p.ann_type(r[1], getattr(r[1].constants[r[2]], "annotation", None))
             if e.id in self.mod.pymods:
-                return ("pymod", self.mod.pymods[e.id][0])
+                name = self.mod.pymods[e.id][0]
+                return ("projmod", self.p.modules[name]) if name in self.p.modules else ("pymod", name)
             return None
         if isinstance(e, ast.Attribute):
             base = self.type_of(e.value)
@@ -845,6 +986,11 @@ class BodyChecker(ast.NodeVisitor):
         if isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute):
             owner = self.type_of(e.func.value)
             method = e.func.attr
+            if owner and owner[0] == "projmod":
+                r = self.p.resolve(owner[1], method)
+                if r and r[0] == "function":
+                    return self.p.ann_type(r[1], r[1].functions[r[2]].node.returns)
+                return (r[0], r[1], r[2]) if r and r[0] in ("record", "newtype") else None
             if owner and owner[0] == "dict":
                 return {"values": ("list", owner[2]), "keys": ("list", owner[1]), "items": ("items", owner[1], owner[2]),
                         "get": owner[2]}.get(method)
@@ -859,6 +1005,8 @@ class BodyChecker(ast.NodeVisitor):
             r = self.p.resolve(self.mod, e.func.id)
             if r and r[0] in ("record", "newtype"):
                 return (r[0], r[1], r[2])
+            if r and r[0] == "py" and isinstance(getattr(stdlib_module(r[1]), r[2], None), type):
+                return ("pyinst", r[1], r[2])
             if r and r[0] == "std" and r[2] in ("Ok", "Err", "Some"):
                 return ("result", "Option" if r[2] == "Some" else "Result")
             if r and r[0] == "function":
@@ -1022,13 +1170,14 @@ class BodyChecker(ast.NodeVisitor):
         if not isinstance(node.ctx, ast.Load):
             return
         self.names_used.add(node.id)
-        if node.id in self.locals or node.id in std.BUILTINS or node.id in std.INTERNAL:
+        if node.id in self.locals or node.id in std.BUILTINS or node.id in std.INTERNAL or node.id in ("__name__", "__doc__"):
             return
         if node.id in std.F001_CALLS or node.id in std.F002_CALLS:
             return  # reported once, as F001/F002, by visit_Call
         if node.id in self.mod.global_names():
-            if self.p.resolve(self.mod, node.id) is None and node.id in self.mod.imports:
-                return  # the broken import is reported once, as R003
+            r = self.p.resolve(self.mod, node.id)
+            if r and r[0] == "py" and (eff := stdlib_effect(r[1], r[2])):
+                self.use(eff, node, via=f"{r[1]}.{r[2]}")
             return
         if self.example_of is not None and (imp := self.p.example_import(self.mod, node.id)):
             self.example_of.example_imports.add(imp)
@@ -1077,6 +1226,17 @@ class BodyChecker(ast.NodeVisitor):
                         context={"newtype": nt, "base": prim},
                         fix={"kind": "replace_token", "from": f"{ast.unparse(node.value)}.{node.attr}", "to": f"{prim}({ast.unparse(node.value)})", "confidence": "medium"},
                     )
+            elif kind == "projmod":
+                target = base[1]
+                if node.attr not in target.global_names() and f"{target.name}.{node.attr}" not in self.p.modules:
+                    fix, cands = replace_fix(node.attr, target.declared_names())
+                    self.err("R002", f"module '{target.name}' has no '{node.attr}'; it declares: {_listing(target.declared_names())}",
+                             node, context={"candidates": cands}, fix=fix)
+            elif kind == "pyinst":
+                cls = getattr(stdlib_module(base[1]), base[2], None)
+                if cls is not None and not node.attr.startswith("_") and not pyclass_has(cls, node.attr):
+                    fix, cands = replace_fix(node.attr, [a for a in dir(cls) if not a.startswith("_")])
+                    self.err("R002", f"'{base[2]}' ({base[1]}) has no attribute '{node.attr}'", node, context={"candidates": cands}, fix=fix)
             elif kind == "librecord":
                 fields = [f for f, _ in base[1].records.get(base[2], [])]
                 if node.attr not in fields:
@@ -1098,6 +1258,8 @@ class BodyChecker(ast.NodeVisitor):
                     )
             elif kind == "pymod":
                 module = stdlib_module(base[1])
+                if module is not None and hasattr(module, node.attr) and (eff := stdlib_effect(base[1], node.attr)):
+                    self.use(eff, node, via=f"{base[1]}.{node.attr}")
                 if module is not None and not hasattr(module, node.attr):
                     fix, cands = replace_fix(node.attr, public_names(module))
                     self.err("R002", f"module '{base[1]}' has no attribute '{node.attr}'", node, context={"candidates": cands}, fix=fix)
@@ -1112,10 +1274,13 @@ class BodyChecker(ast.NodeVisitor):
     # -- calls
 
     def visit_Call(self, node: ast.Call) -> None:
-        for arg in node.args:
-            if isinstance(arg, ast.Starred):
-                self.err("F012", "argument unpacking is not allowed; pass each argument explicitly", arg)
         f = node.func
+        if isinstance(f, ast.Attribute) and (owner := self.type_of(f.value)) and owner[0] == "projmod":
+            r = self.p.resolve(owner[1], f.attr)
+            if r and r[0] == "function":
+                self._check_call(node, r[1], r[1].functions[r[2]])
+            elif r and r[0] == "record":
+                self._check_record_ctor(node, r[1], r[2])
         if isinstance(f, ast.Name) and f.id not in self.locals:
             name = f.id
             if name in std.F001_CALLS:
@@ -1146,23 +1311,29 @@ class BodyChecker(ast.NodeVisitor):
 
     def _check_record_ctor(self, node: ast.Call, owner: ModuleInfo, rec: str) -> None:
         fields = owner.records[rec]
-        if node.args:
-            self.err("T005", f"build '{rec}' with keyword arguments: {rec}(field=value, ...)", node, context={"fields": list(fields)})
+        if _unpacks(node):
+            return
         given: set[str] = set()
+        if node.args and rec in owner.py_records:
+            if len(node.args) > len(fields):
+                self.err("T005", f"'{rec}' has {len(fields)} fields, got {len(node.args)} values: {', '.join(fields)}", node)
+            given = set(list(fields)[: len(node.args)])
+        elif node.args:
+            self.err("T005", f"build '{rec}' with keyword arguments: {rec}(field=value, ...)", node, context={"fields": list(fields)})
         for kw in node.keywords:
-            if kw.arg is None:
-                self.err("F012", "'**' unpacking is not allowed", kw.value)
-            elif kw.arg not in fields:
+            if kw.arg not in fields:
                 fix, cands = replace_fix(kw.arg, fields)
                 self.err("R002", f"record '{rec}' has no field '{kw.arg}'; its fields: {_listing(fields)}", kw.value, context={"known_fields": sorted(fields), "candidates": cands}, fix=fix)
             else:
                 given.add(kw.arg)
         missing = [f for f, (_, has_default) in fields.items() if not has_default and f not in given]
-        if missing and not node.args:
+        if missing and (not node.args or rec in owner.py_records):
             self.err("T005", f"'{rec}' is missing fields: {', '.join(missing)}", node, context={"missing": missing})
 
     def _check_arity(self, node: ast.Call, name: str, params: list[str], required: set[str]) -> None:
         """Argument count and keyword names for a call to a library function."""
+        if _unpacks(node):
+            return
         sig = f"{name}({', '.join(params)})"
         if len(node.args) > len(params):
             self.err("T006", f"'{name}' takes {len(params)} arguments, got {len(node.args)}: the signature is {sig}", node)
@@ -1179,16 +1350,19 @@ class BodyChecker(ast.NodeVisitor):
             self.err("T006", f"'{name}' is missing arguments: {', '.join(missing)}; the signature is {sig}", node)
 
     def _check_call(self, node: ast.Call, owner: ModuleInfo, callee: FuncInfo) -> None:
+        for eff in sorted(self.p.effects_of(owner, callee)):
+            self.use(eff, node, via=callee.name)
+        if _unpacks(node):
+            return  # f(*xs) / f(**kw): the argument count is only known at runtime
         params = callee.params
-        if len(node.args) > len(params):
+        if len(node.args) > len(params) and not callee.varargs:
             self.err("T006", f"'{callee.name}' takes {len(params)} arguments, got {len(node.args)}: the signature is {_signature(callee)}", node)
         given = set(params[: len(node.args)])
         for kw in node.keywords:
-            if kw.arg is None:
-                self.err("F012", "'**' unpacking is not allowed", kw.value)
-            elif kw.arg not in params:
-                fix, cands = replace_fix(kw.arg, params)
-                self.err("R002", f"'{callee.name}' has no parameter '{kw.arg}'", kw.value, context={"params": params, "candidates": cands}, fix=fix)
+            if kw.arg not in params:
+                if not callee.varkw:
+                    fix, cands = replace_fix(kw.arg, params)
+                    self.err("R002", f"'{callee.name}' has no parameter '{kw.arg}'", kw.value, context={"params": params, "candidates": cands}, fix=fix)
             elif kw.arg in given:
                 self.err("T006", f"parameter '{kw.arg}' is given twice", kw.value)
             else:
@@ -1199,8 +1373,6 @@ class BodyChecker(ast.NodeVisitor):
                 "T006", f"'{callee.name}' is missing arguments: {', '.join(missing)}; the signature is {_signature(callee)}",
                 node, context={"missing": missing},
             )
-        for eff in sorted(self.p.effects_of(owner, callee)):
-            self.use(eff, node, via=callee.name)
 
     # -- newtype mixing
 

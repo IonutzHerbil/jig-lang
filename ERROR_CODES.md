@@ -11,7 +11,7 @@ most also carry a `fix` an agent can apply directly.
 | S003 | Naming: functions/params/fields `snake_case`, types `PascalCase`, constants/variants `UPPER_CASE`; reserved names (`result`, `effects`, ...) |
 | S004 | Module constant has no value |
 | S005 | Statement other than a declaration at module level |
-| S006 | Unsupported construct: async, generators, `with`, record bases/decorators, empty record/enum, non-field lines in a record or enum |
+| S006 | Unsupported construct: async, `with`, record bases/decorators, empty record/enum, non-field lines in a record, dataclass or enum |
 | S007 | Name or module defined twice |
 | S008 | Clause placed after the function body started |
 
@@ -60,18 +60,16 @@ most also carry a `fix` an agent can apply directly.
 
 Only what breaks a guarantee. `while`, `try`/`except`, `raise`, `None`, comments, nested helper
 functions and `del` are ordinary Python and allowed (their old codes F007, F008, F009, F016, C002 and C004
-were retired in v0.2).
+were retired in v0.2, as were F004 decorators and F012 `*args`/unpacking).
 
 | Code | Meaning | Use instead |
 | --- | --- | --- |
 | F001 | `eval`, `exec`, `compile` | plain code |
 | F002 | `getattr`, `setattr`, `vars`, `globals`, ..., dunder attributes | direct field access |
-| F003 | `class` | `record` / `enum` + functions |
-| F004 | Decorators | plain functions |
+| F003 | A class with methods, or a method inside a dataclass or Enum | a `@dataclass` / `record` for the data, functions for the behavior |
 | F005 | Relative or star imports, imports below the top | absolute imports at the top |
 | F006 | Importing a name through a module that only re-exports it | import from the origin |
 | F010 | `global`, `nonlocal` | parameters |
-| F012 | `*args`, `**kwargs`, argument unpacking | explicit parameters |
 | F013 | Mutable default values | immutable defaults |
 | F014 | Nested classes | top-level records and enums |
 

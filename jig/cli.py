@@ -21,23 +21,32 @@ from .probes import render_probes, run_probes
 from .transpiler import build
 
 
-def discover(paths: list[str]) -> list[Path]:
+SKIP_DIRS = {".git", "node_modules", "build", "dist", ".venv", "venv", "__pycache__", "tests", "test"}
+
+
+def discover(paths: list[str], py: bool = False) -> list[Path]:
+    """The .jig files under paths, plus .py source files with py=True (test directories and test_*.py skipped)."""
     files: list[Path] = []
     for p in paths:
         path = Path(p)
         if path.is_dir():
-            files.extend(sorted(path.rglob("*.jig")))
-        elif path.suffix == ".jig" and path.exists():
+            found = sorted(path.rglob("*.jig"))
+            if py:
+                found += sorted(f for f in path.rglob("*.py")
+                                if not SKIP_DIRS & set(f.relative_to(path).parts[:-1]) and not f.name.startswith("test_")
+                                and "lib" not in f.relative_to(path).parts[:1])
+            files.extend(found)
+        elif path.suffix in (".jig", ".py") and path.exists():
             files.append(path)
         else:
-            print(json.dumps({"error": f"not a .jig file or directory: {p}"}), file=sys.stderr)
+            print(json.dumps({"error": f"not a .jig/.py file or directory: {p}"}), file=sys.stderr)
             raise SystemExit(2)
     return files
 
 
-def check_project(paths: list[str], run_ex: bool = True) -> tuple[Project, dict[str, Any]]:
+def check_project(paths: list[str], run_ex: bool = True, py: bool = False) -> tuple[Project, dict[str, Any]]:
     project = Project()
-    project.load(discover(paths))
+    project.load(discover(paths, py))
     total = passed = 0
     if run_ex and not project.has_errors:
         with tempfile.TemporaryDirectory() as tmp:
@@ -63,7 +72,7 @@ def feedback_for_model(project: Project) -> str:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    project, summary = check_project(args.paths, run_ex=not args.no_examples)
+    project, summary = check_project(args.paths, run_ex=not args.no_examples, py=args.py)
     if args.for_model:
         print(feedback_for_model(project) or "ok")
     elif args.pretty:
@@ -178,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("paths", nargs="+")
     p.add_argument("--pretty", action="store_true", help="human-readable output")
     p.add_argument("--for-model", action="store_true", help="compact text for a model to repair from")
+    p.add_argument("--py", action="store_true", help="also check .py source files (a plain Python codebase)")
     p.add_argument("--no-examples", action="store_true", help="skip running examples")
     p.set_defaults(func=cmd_check)
 

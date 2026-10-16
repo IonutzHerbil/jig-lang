@@ -16,6 +16,7 @@ It transpiles to plain Python 3.12+ with zero dependencies.
 pip install -e .                       # or: python -m jig ...
 jig check examples/datastructures --pretty         # a passing project
 jig check examples/shop examples/broken --pretty   # see the checker catch LLM mistakes
+jig check --py --pretty bench/repos/billing        # check a plain Python codebase
 jig interface examples/shop            # the low-context view for agents
 jig run examples/shop --entry shop.app.main
 jig build examples/shop -o build/      # plain Python package
@@ -119,5 +120,6 @@ jig/fixer.py        mechanical fixes (jig fix)
 jig/hook.py         Claude Code hook: fix and check every .jig edit
 jig/cli.py          check, fmt, fix, build, interface, run
 bench/              the benchmark: tasks, projects, manuals, runner, report, learner
+bench/agent.py      engineering scenarios: an agent explores and changes a repo (bench/repos, bench/se_tasks)
 integrations/       Claude Code skill and hook installer
 ```

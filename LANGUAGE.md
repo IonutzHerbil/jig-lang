@@ -161,10 +161,22 @@ project, `std`, or a manifest, and corrects a module path when only one module m
 ## Not allowed
 
 Only what breaks a guarantee: `eval`/`exec`, `getattr` and friends, dunder attributes (they dodge the
-closed world); `global`/`nonlocal` and mutable default arguments (hidden shared state); `class` (use `record`
-and `enum` for data, functions for behavior); and, not supported yet, `async`, generators, and `with`.
+closed world); `global`/`nonlocal` and mutable default arguments (hidden shared state); classes with methods
+(write the data as a `@dataclass` or `record`, the behavior as functions that take it); and, not supported
+yet, `async` and `with`. `@dataclass` classes are records (fields checked, positional construction allowed),
+`Enum` subclasses are enums, and decorators, generators, `*args`, `**kwargs` and argument unpacking work as in
+Python.
 All other Python builtins are available, except `open`, `input`, `id` and `hash` (effects or
 non-determinism).
+
+## Existing Python codebases
+
+`jig check --py <dir>` checks plain `.py` files as they are: no `module` header (names come from the package
+path), any formatting and naming style, and effectful standard-library modules (`time`, `logging`, `os`, ...)
+whose use is tracked as an effect. Test directories and `test_*.py` are skipped; `lib/` holds third-party
+clients whose `.manifest` files give Jig their exact API, exceptions included. Everything Jig checks still
+applies: unknown names, imports, fields and methods (also on standard-library objects such as `Counter` or
+`date`), wrong arguments, library APIs, and types through calls, loops and containers.
 
 ## Project files
 
@@ -176,6 +188,7 @@ nearest ancestor of each `.jig` file that has a `lib/` or `.decisions/`.
 ```
 lib stripe
 
+exception StripeDown
 type ChargeId = ChargeId(str)
 enum StripeError:
     CARD_DECLINED

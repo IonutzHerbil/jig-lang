@@ -26,6 +26,7 @@ from .diagnostics import Diagnostic
 
 TYPE_RE = re.compile(r"type\s+(\w+)\s*=\s*\1\(\s*(\w+)\s*\)")
 BLOCK_RE = re.compile(r"(enum|record)\s+(\w+)\s*:")
+EXCEPTION_RE = re.compile(r"exception\s+(\w+)(?:\((\w+)\))?")
 DECLARE_RE = re.compile(r"declare\s+(\w+)\s*\(.*\)\s*(?:->\s*(.+))?")
 FIELD_RE = re.compile(r"(\w+)\s*:\s*(.+)")
 
@@ -35,6 +36,7 @@ class Manifest:
     name: str
     dir: Path
     newtypes: dict[str, str] = field(default_factory=dict)
+    exceptions: dict[str, str] = field(default_factory=dict)  # name -> base (another exception here, or Exception)
     enums: dict[str, list[str]] = field(default_factory=dict)
     records: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     functions: dict[str, set[str]] = field(default_factory=dict)
@@ -43,7 +45,7 @@ class Manifest:
 
     @property
     def exports(self) -> set[str]:
-        return set(self.newtypes) | set(self.enums) | set(self.records) | set(self.functions)
+        return set(self.newtypes) | set(self.enums) | set(self.records) | set(self.functions) | set(self.exceptions)
 
 
 def _param_names(text: str) -> list[str]:
@@ -90,6 +92,9 @@ def parse_manifest(path: Path) -> tuple[Manifest | None, list[Diagnostic]]:
                         manifest.functions[name].add(eff)
                     elif eff != "none":
                         err("M003", f"unknown effect '{eff}'", lineno)
+        elif m := EXCEPTION_RE.fullmatch(line):
+            block = None
+            manifest.exceptions[m.group(1)] = m.group(2) or "Exception"
         elif m := TYPE_RE.fullmatch(line):
             block = None
             manifest.newtypes[m.group(1)] = m.group(2)
@@ -106,7 +111,7 @@ def parse_manifest(path: Path) -> tuple[Manifest | None, list[Diagnostic]]:
             manifest.params[m.group(1)] = _param_names(line[line.index("(") + 1 : line.rindex(")")])
         else:
             block = None
-            err("M002", "expected 'type', 'enum', 'record', or 'declare'", lineno)
+            err("M002", "expected 'type', 'enum', 'record', 'exception', or 'declare'", lineno)
     if manifest is None:
         err("M001", "a manifest must start with 'lib <name>'", 1)
     return manifest, diags

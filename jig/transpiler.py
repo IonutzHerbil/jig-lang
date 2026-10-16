@@ -51,6 +51,8 @@ class _Transformer(ast.NodeTransformer):
         return node
 
     def visit_ClassDef(self, node: ast.ClassDef) -> ast.ClassDef:
+        if node.name in self.mod.py_records or node.name not in self.mod.pre.records | self.mod.pre.enums.keys():
+            return node  # a @dataclass or an Enum subclass is already Python
         if node.name in self.mod.records:
             node.decorator_list = [_rt("record")]
         elif node.name in self.mod.enums:
@@ -88,7 +90,8 @@ class _Transformer(ast.NodeTransformer):
                     ast.keyword(arg="ensures", value=ensures),
                     ast.keyword(arg="effects", value=effects),
                 ],
-            )
+            ),
+            *node.decorator_list,
         ]
         return node
 
@@ -118,6 +121,7 @@ def render_lib(man: Manifest, impl_file: Path) -> str:
         "from jig_runtime import Err, Nothing, Ok, Some, replace",
     ]
     out += [f'{n} = __jig__.newtype("{n}", {base})' for n, base in man.newtypes.items()]
+    out += [f"class {n}({base}):\n    pass" for n, base in man.exceptions.items()]
     for n, variants in man.enums.items():
         out += [f"class {n}(__jig__.Enum):", *([f"    {v} = {v!r}" for v in variants] or ["    pass"])]
     for n, fields in man.records.items():
