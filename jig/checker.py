@@ -155,6 +155,20 @@ def _return_base(fi: FuncInfo | None) -> str | None:
     return base.id if isinstance(base, ast.Name) else None
 
 
+def _listing(names: Iterable[str], limit: int = 25) -> str:
+    names = sorted(names)
+    return ", ".join(names[:limit]) + (f", ... ({len(names) - limit} more)" if len(names) > limit else "")
+
+
+def _element(t: tuple | None) -> tuple | None:
+    """What iterating a value of type t gives: list/set elements, dict keys."""
+    if t and t[0] == "list":
+        return t[1]
+    if t and t[0] == "dict":
+        return t[1]
+    return None
+
+
 def _signature(fi: FuncInfo) -> str:
     return f"{fi.name}({', '.join(fi.params)})"
 
@@ -301,6 +315,46 @@ class Project:
             return (r[0], r[1], r[2])
         if r[0] == "std" and r[1] == "std.ctx" and r[2] == "Ctx":
             return ("ctx",)
+        if r[0] == "lib" and r[2] in r[1].records:
+            return ("librecord", r[1], r[2])
+        return None
+
+    def ann_type(self, mod: ModuleInfo, ann: ast.expr | None) -> tuple | None:
+        """The checker's type for an annotation: names, list/set/dict, Result/Option (with their payload)."""
+        if isinstance(ann, ast.Name):
+            return self.type_desc(mod, ann.id)
+        if isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name):
+            args = ann.slice.elts if isinstance(ann.slice, ast.Tuple) else [ann.slice]
+            base = ann.value.id
+            if base in ("list", "set") and args:
+                return ("list", self.ann_type(mod, args[0]))
+            if base == "dict" and len(args) == 2:
+                return ("dict", self.ann_type(mod, args[0]), self.ann_type(mod, args[1]))
+            if base in ("Result", "Option") and args:
+                err = args[1].id if base == "Result" and len(args) == 2 and isinstance(args[1], ast.Name) else None
+                return ("result", base, self.ann_type(mod, args[0]), err)
+        return None
+
+    def lib_type(self, manifest: Manifest, text: str) -> tuple | None:
+        """The type for a manifest's type string, resolving names in that manifest."""
+        try:
+            ann = ast.parse(text, mode="eval").body
+        except SyntaxError:
+            return None
+        return self._lib_ann(manifest, ann)
+
+    def _lib_ann(self, manifest: Manifest, ann: ast.expr) -> tuple | None:
+        if isinstance(ann, ast.Name):
+            if ann.id in ("int", "float"):
+                return ("prim", ann.id)
+            return ("librecord", manifest, ann.id) if ann.id in manifest.records else None
+        if isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name):
+            args = ann.slice.elts if isinstance(ann.slice, ast.Tuple) else [ann.slice]
+            if ann.value.id in ("list", "set") and args:
+                return ("list", self._lib_ann(manifest, args[0]))
+            if ann.value.id in ("Result", "Option") and args:
+                err = args[1].id if len(args) == 2 and isinstance(args[1], ast.Name) else None
+                return ("result", ann.value.id, self._lib_ann(manifest, args[0]), err)
         return None
 
     def effects_of(self, mod: ModuleInfo, fi: FuncInfo) -> set[str]:
@@ -538,7 +592,8 @@ class Project:
             self.diag("R003", f"module '{m}' has effects Jig tracks another way: {hint}", mod, line, context={"module": m})
             return
         fix, cands = replace_fix(m, [*std.STD, *std.STDLIB, *self.modules, *(f"lib.{k}" for k in self.manifests)])
-        self.diag("R003", f"unknown module '{m}'", mod, line, context={"candidates": cands}, fix=fix)
+        known = [*self.modules, *(f"lib.{k}" for k in self.manifests)]
+        self.diag("R003", f"unknown module '{m}'; project modules and libraries: {_listing(known)}", mod, line, context={"candidates": cands}, fix=fix)
 
     def _check_module(self, mod: ModuleInfo) -> None:
         for local, (m, line) in mod.pymods.items():
@@ -553,12 +608,12 @@ class Project:
             elif m in std.STD:
                 if n not in std.STD[m]:
                     fix, cands = replace_fix(n, std.STD[m])
-                    self.diag("R003", f"'{m}' has no export '{n}'", mod, line, context={"exports": sorted(std.STD[m]), "candidates": cands}, fix=fix)
+                    self.diag("R003", f"'{m}' has no export '{n}'; it exports: {_listing(std.STD[m])}", mod, line, context={"exports": sorted(std.STD[m]), "candidates": cands}, fix=fix)
             elif m.startswith("lib.") and m[4:] in self.manifests:
                 exports = self.manifests[m[4:]].exports
                 if n not in exports:
                     fix, cands = replace_fix(n, exports)
-                    self.diag("R003", f"'{m}' has no export '{n}'", mod, line, context={"exports": sorted(exports), "candidates": cands}, fix=fix)
+                    self.diag("R003", f"'{m}' has no export '{n}'; it exports: {_listing(exports)}", mod, line, context={"exports": sorted(exports), "candidates": cands}, fix=fix)
             elif m in self.modules:
                 target = self.modules[m]
                 if n in target.imports:
@@ -572,7 +627,7 @@ class Project:
                     )
                 elif n not in target.declared_names():
                     fix, cands = replace_fix(n, target.declared_names())
-                    self.diag("R003", f"module '{m}' has no declaration '{n}'", mod, line, context={"declarations": sorted(target.declared_names()), "candidates": cands}, fix=fix)
+                    self.diag("R003", f"module '{m}' has no declaration '{n}'; it declares: {_listing(target.declared_names())}", mod, line, context={"declarations": sorted(target.declared_names()), "candidates": cands}, fix=fix)
             else:
                 self._unknown_module(mod, m, line)
 
@@ -644,8 +699,9 @@ class Project:
         for arg in all_args:
             if var_types.get(arg.arg) == ("ctx",) and arg.arg not in checker.names_used:
                 err(
-                    "W002", f"parameter '{arg.arg}: Ctx' is never used; take a Ctx only for time, randomness or logging",
-                    arg.lineno, arg.col_offset, severity="warning",
+                    "T008", f"parameter '{arg.arg}: Ctx' is never used: remove it, so callers pass only what was asked for; "
+                    "take a Ctx only for time, randomness or logging",
+                    arg.lineno, arg.col_offset,
                 )
         # Declaring effects is optional: undeclared ones are inferred. A declaration is an assertion, checked here.
         if fi.effects is not None:
@@ -690,10 +746,9 @@ class Project:
         body = node.body[1:] if fi.docstring is not None else node.body
         var_types: dict[str, tuple] = {}
         for arg in all_args:
-            if isinstance(arg.annotation, ast.Name):
-                t = self.type_desc(mod, arg.annotation.id)
-                if t:
-                    var_types[arg.arg] = t
+            t = self.ann_type(mod, arg.annotation)
+            if t:
+                var_types[arg.arg] = t
         checker = BodyChecker(self, mod, fi, set(fi.params) | _bound_names(body), var_types, silent=silent)
         for arg in all_args:
             if arg.annotation is not None:
@@ -765,8 +820,7 @@ class BodyChecker(ast.NodeVisitor):
             if r and r[0] == "enum":
                 return ("enum_type", r[1], r[2])
             if r and r[0] == "constant":
-                ann = getattr(r[1].constants[r[2]], "annotation", None)
-                return self.p.type_desc(r[1], ann.id) if isinstance(ann, ast.Name) else None
+                return self.p.ann_type(r[1], getattr(r[1].constants[r[2]], "annotation", None))
             if e.id in self.mod.pymods:
                 return ("pymod", self.mod.pymods[e.id][0])
             return None
@@ -777,14 +831,30 @@ class BodyChecker(ast.NodeVisitor):
             if base[0] == "record":
                 owner, rec = base[1], base[2]
                 fld = owner.records[rec].get(e.attr)
-                if fld and isinstance(fld[0], ast.Name):
-                    return self.p.type_desc(owner, fld[0].id)
-                return None
+                return self.p.ann_type(owner, fld[0]) if fld else None
+            if base[0] == "librecord":
+                fields = dict(base[1].records.get(base[2], []))
+                return self.p.lib_type(base[1], fields[e.attr]) if e.attr in fields else None
+            if base[0] == "result" and e.attr == "value":
+                return base[2] if len(base) > 2 else None
             if base[0] == "ctx" and e.attr in std.CTX_PARTS:
                 return ("ctx_part", e.attr)
             if base[0] == "pymod" and f"{base[1]}.{e.attr}" in std.STDLIB:
                 return ("pymod", f"{base[1]}.{e.attr}")
             return None
+        if isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute):
+            owner = self.type_of(e.func.value)
+            method = e.func.attr
+            if owner and owner[0] == "dict":
+                return {"values": ("list", owner[2]), "keys": ("list", owner[1]), "items": ("items", owner[1], owner[2]),
+                        "get": owner[2]}.get(method)
+            if owner and owner[0] == "result" and method == "unwrap_or":
+                return owner[2] if len(owner) > 2 else None
+            return None
+        if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id in ("sorted", "list", "reversed") and e.args:
+            inner = self.type_of(e.args[0])
+            elem = _element(inner)
+            return ("list", elem) if inner and inner[0] in ("list", "dict") else None
         if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id not in self.locals:
             r = self.p.resolve(self.mod, e.func.id)
             if r and r[0] in ("record", "newtype"):
@@ -792,13 +862,9 @@ class BodyChecker(ast.NodeVisitor):
             if r and r[0] == "std" and r[2] in ("Ok", "Err", "Some"):
                 return ("result", "Option" if r[2] == "Some" else "Result")
             if r and r[0] == "function":
-                ret = r[1].functions[r[2]].node.returns
-                if isinstance(ret, ast.Subscript) and isinstance(ret.value, ast.Name) and ret.value.id in ("Result", "Option"):
-                    return ("result", ret.value.id)
-                return self.p.type_desc(r[1], ret.id) if isinstance(ret, ast.Name) else None
+                return self.p.ann_type(r[1], r[1].functions[r[2]].node.returns)
             if r and r[0] == "lib":
-                ret = r[1].returns.get(r[2], "")
-                return ("result", ret.split("[")[0]) if ret.split("[")[0] in ("Result", "Option") else None
+                return self.p.lib_type(r[1], r[1].returns.get(r[2], "")) if r[1].returns.get(r[2]) else None
             return None
         if isinstance(e, ast.BinOp) and isinstance(e.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod)):
             for side in (self.type_of(e.left), self.type_of(e.right)):
@@ -866,10 +932,87 @@ class BodyChecker(ast.NodeVisitor):
             else:
                 self.var_types.pop(node.targets[0].id, None)
 
+    def _declared_error(self) -> str | None:
+        t = self.p.ann_type(self.mod, self.func.node.returns) if self.func else None
+        return t[3] if t and t[0] == "result" and len(t) > 3 else None
+
+    def _error_of(self, e: ast.expr) -> str | None:
+        """The error type name an expression would produce as an Err, when known."""
+        if (
+            isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id == "Err" and len(e.args) == 1
+            and isinstance(e.args[0], ast.Attribute) and isinstance(e.args[0].value, ast.Name)
+        ):
+            r = self.p.resolve(self.mod, e.args[0].value.id)
+            if r and (r[0] == "enum" or (r[0] == "lib" and r[2] in r[1].enums)):
+                return r[2]
+            return None
+        t = self.type_of(e)
+        return t[3] if t and t[0] == "result" and len(t) > 3 else None
+
+    def _check_error_type(self, e: ast.expr, how: str) -> None:
+        want = self._declared_error()
+        got = self._error_of(e)
+        if want and got and got != want:
+            self.err(
+                "T009", f"{how} a {got} error, but '{self.func.name}' returns {want} errors",
+                e, fix={"kind": "review", "hint": f"check the Err and return the {want} variant the request names for "
+                        f"it (e.g. `if r.is_err(): return Err({want}.<VARIANT>)`), or convert with `.map_err(...)`"},
+            )
+
+    def visit_Return(self, node: ast.Return) -> None:
+        if node.value is not None:
+            self._check_error_type(node.value, "returns")
+        self.generic_visit(node)
+
+    def _bind(self, target: ast.expr, container: tuple | None) -> None:
+        """Give a loop or comprehension target the element type of what it iterates."""
+        if container and container[0] == "items" and isinstance(target, ast.Tuple) and len(target.elts) == 2:
+            for t, sub in zip(target.elts, container[1:]):
+                if isinstance(t, ast.Name):
+                    self._set_type(t.id, sub)
+        elif isinstance(target, ast.Name):
+            self._set_type(target.id, _element(container))
+
+    def _set_type(self, name: str, t: tuple | None) -> None:
+        if t:
+            self.var_types[name] = t
+        else:
+            self.var_types.pop(name, None)
+
+    def visit_For(self, node: ast.For) -> None:
+        self.visit(node.iter)
+        self._bind(node.target, self.type_of(node.iter))
+        for stmt in node.body + node.orelse:
+            self.visit(stmt)
+
+    def visit_comprehension(self, node: ast.comprehension) -> None:
+        self.visit(node.iter)
+        self._bind(node.target, self.type_of(node.iter))
+        for cond in node.ifs:
+            self.visit(cond)
+
+    def _visit_comp(self, node: ast.expr, results: list[ast.expr]) -> None:
+        for gen in node.generators:  # type: ignore[attr-defined]
+            self.visit(gen)
+        for r in results:
+            self.visit(r)
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        self._visit_comp(node, [node.elt])
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        self._visit_comp(node, [node.elt])
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        self._visit_comp(node, [node.elt])
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        self._visit_comp(node, [node.key, node.value])
+
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         self.generic_visit(node)
-        if isinstance(node.target, ast.Name) and isinstance(node.annotation, ast.Name):
-            t = self.p.type_desc(self.mod, node.annotation.id)
+        if isinstance(node.target, ast.Name):
+            t = self.p.ann_type(self.mod, node.annotation)
             if t:
                 self.var_types[node.target.id] = t
 
@@ -910,7 +1053,7 @@ class BodyChecker(ast.NodeVisitor):
                 fields = owner.records[rec]
                 if node.attr not in fields:
                     fix, cands = replace_fix(node.attr, fields)
-                    self.err("R002", f"record '{rec}' has no field '{node.attr}'", node, context={"record": rec, "known_fields": sorted(fields), "candidates": cands}, fix=fix)
+                    self.err("R002", f"record '{rec}' has no field '{node.attr}'; its fields: {_listing(fields)}", node, context={"record": rec, "known_fields": sorted(fields), "candidates": cands}, fix=fix)
             elif kind == "ctx":
                 if node.attr not in std.CTX_PARTS:
                     fix, cands = replace_fix(node.attr, std.CTX_PARTS)
@@ -928,11 +1071,23 @@ class BodyChecker(ast.NodeVisitor):
                 if node.attr.startswith("_") or not hasattr(std.PRIMITIVE_TYPES[prim], node.attr):
                     self.err(
                         "R002",
-                        f"newtype '{nt}' has no attribute '{node.attr}'; use {prim}(x) for the underlying value",
+                        f"newtype '{nt}' has no attribute '{node.attr}'; use {prim}(x) for the underlying value"
+                        + (" (looping over a dict gives its keys: use .values() or .items())" if prim == "str" else ""),
                         node,
                         context={"newtype": nt, "base": prim},
                         fix={"kind": "replace_token", "from": f"{ast.unparse(node.value)}.{node.attr}", "to": f"{prim}({ast.unparse(node.value)})", "confidence": "medium"},
                     )
+            elif kind == "librecord":
+                fields = [f for f, _ in base[1].records.get(base[2], [])]
+                if node.attr not in fields:
+                    fix, cands = replace_fix(node.attr, fields)
+                    self.err("R002", f"'{base[2]}' (lib.{base[1].name}) has no field '{node.attr}'; its fields: {_listing(fields)}",
+                             node, context={"candidates": cands}, fix=fix)
+            elif kind in ("list", "dict"):
+                pytype = list if kind == "list" else dict
+                if not node.attr.startswith("_") and not hasattr(pytype, node.attr):
+                    fix, cands = replace_fix(node.attr, [a for a in dir(pytype) if not a.startswith("_")])
+                    self.err("R002", f"{pytype.__name__} has no attribute '{node.attr}'", node, context={"candidates": cands}, fix=fix)
             elif kind == "result":
                 allowed = std.RESULT_ATTRS if base[1] == "Result" else std.OPTION_ATTRS
                 if node.attr not in allowed:
@@ -951,7 +1106,7 @@ class BodyChecker(ast.NodeVisitor):
                 variants = owner.enums[en]
                 if node.attr not in variants:
                     fix, cands = replace_fix(node.attr, variants)
-                    self.err("R002", f"enum '{en}' has no variant '{node.attr}'", node, context={"enum": en, "known_variants": variants, "candidates": cands}, fix=fix)
+                    self.err("R002", f"enum '{en}' has no variant '{node.attr}'; its variants: {_listing(variants)}", node, context={"enum": en, "known_variants": variants, "candidates": cands}, fix=fix)
         self.generic_visit(node)
 
     # -- calls
@@ -970,6 +1125,8 @@ class BodyChecker(ast.NodeVisitor):
             elif name == "__jig_try__":
                 if _return_base(self.func) not in ("Result", "Option"):
                     self.err("T007", "'?' is only valid in functions returning Result or Option", node)
+                elif node.args:
+                    self._check_error_type(node.args[0], "'?' passes on")
             elif name in std.BUILTIN_EFFECTS:
                 self.use(std.BUILTIN_EFFECTS[name], node)
             else:
@@ -997,7 +1154,7 @@ class BodyChecker(ast.NodeVisitor):
                 self.err("F012", "'**' unpacking is not allowed", kw.value)
             elif kw.arg not in fields:
                 fix, cands = replace_fix(kw.arg, fields)
-                self.err("R002", f"record '{rec}' has no field '{kw.arg}'", kw.value, context={"known_fields": sorted(fields), "candidates": cands}, fix=fix)
+                self.err("R002", f"record '{rec}' has no field '{kw.arg}'; its fields: {_listing(fields)}", kw.value, context={"known_fields": sorted(fields), "candidates": cands}, fix=fix)
             else:
                 given.add(kw.arg)
         missing = [f for f, (_, has_default) in fields.items() if not has_default and f not in given]

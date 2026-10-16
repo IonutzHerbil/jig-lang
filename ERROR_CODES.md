@@ -34,6 +34,8 @@ most also carry a `fix` an agent can apply directly.
 | T005 | Record built positionally, or missing required fields |
 | T006 | Wrong call arity: too many, missing, or duplicate arguments; newtype given more than one value |
 | T007 | `?` used in a function that does not return `Result` or `Option` |
+| T008 | A `ctx: Ctx` parameter the function never uses (callers would have to pass it) |
+| T009 | An `Err`, `?` or returned `Result` whose error type differs from the function's declared one (e.g. a library's error leaking out) |
 
 ## Effects
 
@@ -44,7 +46,6 @@ most also carry a `fix` an agent can apply directly.
 | E003 | Unknown effect, or `none` combined with other effects |
 | E004 | Contract or module constant is not pure |
 | W001 | Declares an effect it never uses (warning) |
-| W002 | A `ctx: Ctx` parameter the function never uses (warning) |
 
 ## Contracts and examples
 

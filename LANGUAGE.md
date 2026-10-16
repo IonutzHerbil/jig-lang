@@ -137,7 +137,8 @@ Variants are `UPPER_CASE`. A `match` over an enum must cover every variant or ha
 `Result[T, E]` is `Ok(value)` or `Err(error)`, with `.is_ok()`, `.is_err()`, `.value`, `.error`, `.map(f)`,
 `.map_err(f)`, `.and_then(f)` and `.unwrap_or(default)`. `Option[T]` is `Some(value)` or `Nothing`, with
 `.is_some()`, `.is_nothing()`, `.value`, `.map(f)`, `.and_then(f)` and `.unwrap_or(default)`. Any other
-attribute (`unwrap`, `ok`, ...) is R002. `expr?` unwraps an `Ok`/`Some`, or returns the `Err`/`Nothing` from the enclosing
+attribute (`unwrap`, `ok`, ...) is R002. A function's errors are its declared error type: an `Err`, `?` or returned
+`Result` carrying another type, such as a library's error, is T009; translate it to your own variant. `expr?` unwraps an `Ok`/`Some`, or returns the `Err`/`Nothing` from the enclosing
 function. Use them for failures callers should handle; exceptions remain available as in Python.
 
 ## Constants
