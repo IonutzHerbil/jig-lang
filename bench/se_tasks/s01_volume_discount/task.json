@@ -1,0 +1,5 @@
+{
+  "repo": "billing",
+  "kind": "feature",
+  "request": "Add a volume discount for big teams: on TEAM plans, when a subscription has 20 or more seats, invoices get 10% off the extra-seats amount. Show it on the invoice as its own line called \"volume discount\" with a negative amount, right after the extra seats line. Coupons and tax apply after the volume discount."
+}

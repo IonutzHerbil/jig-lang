@@ -1,0 +1,25 @@
+"""The plans customers can subscribe to."""
+
+from billing.errors import NotFound
+from billing.models import Interval, Plan, Tier
+
+PLANS: dict[str, Plan] = {
+    "free": Plan("free", Tier.FREE, Interval.MONTHLY, 0, 0, 1),
+    "pro-m": Plan("pro-m", Tier.PRO, Interval.MONTHLY, 2_000, 0, 1),
+    "pro-y": Plan("pro-y", Tier.PRO, Interval.YEARLY, 20_000, 0, 1),
+    "team-m": Plan("team-m", Tier.TEAM, Interval.MONTHLY, 5_000, 1_200, 5),
+    "team-y": Plan("team-y", Tier.TEAM, Interval.YEARLY, 50_000, 12_000, 5),
+    "ent-y": Plan("ent-y", Tier.ENTERPRISE, Interval.YEARLY, 300_000, 9_000, 50),
+}
+
+TIER_RANK = {Tier.FREE: 0, Tier.PRO: 1, Tier.TEAM: 2, Tier.ENTERPRISE: 3}
+
+
+def get_plan(code: str) -> Plan:
+    if code not in PLANS:
+        raise NotFound(f"plan {code}")
+    return PLANS[code]
+
+
+def plans_for(tier: Tier) -> list[Plan]:
+    return [p for p in PLANS.values() if p.tier == tier]

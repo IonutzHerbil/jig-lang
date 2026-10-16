@@ -1,0 +1,22 @@
+lib gateway
+
+exception GatewayError
+
+record ChargeRequest:
+    customer_id: str
+    amount_cents: int
+    currency: str
+    idempotency_key: str
+
+record ChargeResult:
+    id: str
+    status: str
+    decline_reason: str
+
+declare charge(request: ChargeRequest) -> ChargeResult
+    effects: net
+    doc: "Charge a saved card; status is succeeded or declined; same idempotency_key returns the first result"
+
+declare refund(charge_id: str, amount_cents: int) -> str
+    effects: net
+    doc: "Refund part or all of a charge; returns the refund id"

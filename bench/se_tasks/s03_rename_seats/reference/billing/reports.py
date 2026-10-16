@@ -1,0 +1,23 @@
+"""Business metrics."""
+
+from billing import store
+from billing.catalog import get_plan
+from billing.models import Interval, SubStatus, Subscription
+from billing.pricing import subscription_price
+
+PAYING = {SubStatus.ACTIVE, SubStatus.PAST_DUE}
+
+
+def monthly_value(sub: Subscription) -> int:
+    """A subscription's price per month; yearly plans count a twelfth, rounded down."""
+    price = subscription_price(sub)
+    return price // 12 if get_plan(sub.plan_code).interval == Interval.YEARLY else price
+
+
+def mrr() -> int:
+    """Monthly recurring revenue of paying subscriptions (not trialing, not canceled)."""
+    return sum(monthly_value(s) for s in store.SUBSCRIPTIONS.values() if s.status in PAYING)
+
+
+def seats_in_use() -> int:
+    return sum(s.seat_count for s in store.SUBSCRIPTIONS.values() if s.status in PAYING)

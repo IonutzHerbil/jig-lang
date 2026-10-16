@@ -1,0 +1,5 @@
+{
+  "repo": "billing",
+  "kind": "refactor",
+  "request": "Rename the Subscription field `seats` to `seat_count` throughout the code base: the model and every place that uses it. The tests already use the new name. Behavior must stay exactly the same."
+}

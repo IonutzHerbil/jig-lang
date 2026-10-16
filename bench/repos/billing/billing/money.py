@@ -1,0 +1,21 @@
+"""Money helpers. Every amount is an int number of cents."""
+
+SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
+
+
+def percent_of(amount_cents: int, percent: float) -> int:
+    """percent% of an amount, rounded half up to whole cents."""
+    return int(amount_cents * percent / 100 + 0.5)
+
+
+def fmt(amount_cents: int, currency: str = "USD") -> str:
+    """Display form: '$12.50', '-€3.00'."""
+    sign = "-" if amount_cents < 0 else ""
+    cents = abs(amount_cents)
+    return f"{sign}{SYMBOLS.get(currency, currency + ' ')}{cents // 100}.{cents % 100:02d}"
+
+
+def split_evenly(amount_cents: int, parts: int) -> list[int]:
+    """Split into parts that differ by at most one cent, larger parts first."""
+    base, extra = divmod(amount_cents, parts)
+    return [base + 1 if i < extra else base for i in range(parts)]

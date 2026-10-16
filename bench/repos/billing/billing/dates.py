@@ -1,0 +1,15 @@
+"""Billing periods on integer day numbers."""
+
+from billing.models import Interval
+
+PERIOD_DAYS = {Interval.MONTHLY: 30, Interval.YEARLY: 365}
+
+
+def period_end(start_day: int, interval: Interval) -> int:
+    """The first day after a period that starts on start_day."""
+    return start_day + PERIOD_DAYS[interval]
+
+
+def days_left(today: int, end_day: int) -> int:
+    """Whole days remaining before end_day, never negative."""
+    return max(0, end_day - today)
