@@ -31,7 +31,14 @@ Jig is Python 3.12 plus checks. Write normal, idiomatic Python; it is valid Jig.
   `random`, `net`, `db`, `fs`, ...) asserts what the function may do, otherwise effects are inferred;
   `requires:` (inputs callers must never pass; not allowed on functions returning `Result`, which return
   `Err` instead) and `ensures:` contracts; `examples:` lines `f(1, 2) -> 3`, `-> Ok`, `-> Err`, `-> rejected`.
-- **Not allowed**: `class` (use `record`/`enum`), `global`, mutable default arguments, `eval`/`getattr`,
-  dunder attributes, `async`, generators (`yield`), `with`, `open`/`input`.
+- **Classes** work as in Python: attributes are what the class declares or sets on `self`; calls are checked
+  against `__init__` and each method's signature. Records are immutable: `replace(r, field=value)`.
+  `async def`/`await` work (always `await` an async call). `with`, generators, decorators work.
+- **Not allowed**: `global`, mutable default arguments, `eval`/`getattr`, dunder attributes (except through
+  `super()`), `threading`, `open`/`input`.
 
-Type-hint parameters and returns: they let Jig check every call.
+- **Web** (`from std.web import App, Html, Request, h, page, redirect`): `app = App()`, `@app.get("/x/{id}")`
+  handlers return `Html`; build markup with `h.div(...)`, `h.a("Home", href="/")`, `class_=`; htmx through
+  `post="/path", target="#id", swap="outerHTML"`. Every link must match a route.
+
+Type-hint parameters and returns: Jig checks every argument, record field and return value against them.

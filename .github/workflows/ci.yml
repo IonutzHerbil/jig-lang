@@ -18,3 +18,9 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install -e .[dev]
       - run: pytest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node vscode-jig/test/client.test.js
+        env:
+          JIG_PYTHON: python

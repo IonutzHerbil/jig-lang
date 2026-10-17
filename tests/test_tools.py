@@ -102,3 +102,39 @@ def test_doc_renders_the_reference_for_a_terminal():
     assert "lib stripe" in jig("doc", "manifests").stdout
     assert "```" in jig("doc", "records", "--raw").stdout
     assert jig("doc", "no-such-topic").returncode == 1
+
+
+def test_repl_checks_each_input_before_running_it(tmp_path, monkeypatch):
+    from jig.repl import Session
+
+    monkeypatch.chdir(tmp_path)
+    s = Session(tmp_path)
+    assert s.submit("type Money = Money(int)") == ""
+    assert s.submit("def double(m: Money) -> Money:\n    return m * 2") == ""
+    assert s.submit("double(Money(4))") == "Money(8)    : Money"
+    assert s.submit("double(4)").startswith("error T010: 'double' parameter 'm' expects Money, got int")
+    assert s.submit("class Box:\n    def __init__(self, v: int) -> None:\n        self.v = v") == ""
+    assert s.submit("b = Box(3)") == ""
+    assert s.submit("b.v + 2") == "5    : int"
+    assert s.submit("b.w").startswith("error R002: class 'Box' has no attribute 'w'")
+    assert s.submit(":type [b]") == "list[Box]"
+    assert s.submit("1 / 0") == "runtime error: ZeroDivisionError: division by zero"
+    assert s.submit("def double(m: Money) -> Money:\n    return m * 3") == ""  # redefining replaces
+    assert s.submit("double(Money(1))") == "Money(3)    : Money"
+
+
+def test_entry_point_launcher_and_dockerfile(tmp_path):
+    new(tmp_path / "hello", python=False)
+    root = tmp_path / "hello"
+    assert json.loads((root / ".jig" / "config.json").read_text(encoding="utf-8"))["entry"] == "hello.app.main"
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+    assert "RUN jig gate ." in dockerfile and "--entry hello.app.main" in dockerfile and 'CMD ["python", "/app"]' in dockerfile
+    assert (root / ".dockerignore").is_file()
+
+    assert jig("run", cwd=root).stdout.strip() == "'Hello, world!'"
+    assert jig("build", ".", "-o", str(tmp_path / "out"), cwd=root).returncode == 0
+    ran = subprocess.run([sys.executable, str(tmp_path / "out")], capture_output=True, text=True)
+    assert ran.stdout.strip() == "Hello, world!", ran.stderr  # plain Python, no Jig
+
+    bad = jig("build", ".", "-o", str(tmp_path / "out2"), "--entry", "hello.greeting.greet", cwd=root)
+    assert bad.returncode == 2 and "takes parameters (name)" in bad.stdout

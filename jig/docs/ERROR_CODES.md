@@ -11,9 +11,10 @@ most also carry a `fix` an agent can apply directly.
 | S003 | Naming: functions/params/fields `snake_case`, types `PascalCase`, constants/variants `UPPER_CASE`; reserved names (`result`, `effects`, ...) |
 | S004 | Module constant has no value |
 | S005 | Statement other than a declaration at module level |
-| S006 | Unsupported construct: async, `with`, record bases/decorators, empty record/enum, non-field lines in a record, dataclass or enum |
+| S006 | Unsupported construct: record bases/decorators, empty record/enum, other statements in a record, dataclass or enum body |
 | S007 | Name or module defined twice |
 | S008 | Clause placed after the function body started |
+| S009 | A module whose top-level package is a Python standard-library module (`site`, `test`, `email`, ...): the built program would import Python's instead |
 
 ## Resolution
 
@@ -36,6 +37,9 @@ most also carry a `fix` an agent can apply directly.
 | T007 | `?` used in a function that does not return `Result` or `Option` |
 | T008 | A `ctx: Ctx` parameter the function never uses (callers would have to pass it) |
 | T009 | An `Err`, `?` or returned `Result` whose error type differs from the function's declared one (e.g. a library's error leaking out) |
+| T010 | A value of the wrong type: an argument, record field, newtype value, return value or annotated variable whose type can never be the one declared (an `Order` where a `Customer` is asked, `"10"` where `Money` is, a `Result` returned where a plain value is promised). A newtype may go where its base type is asked |
+| T011 | Assigning a field of a record (records are immutable: `replace(r, field=value)`), a variant of an enum, or a method |
+| T012 | Calling an async function without `await`: the coroutine never runs |
 
 ## Effects
 
@@ -60,13 +64,13 @@ most also carry a `fix` an agent can apply directly.
 
 Only what breaks a guarantee. `while`, `try`/`except`, `raise`, `None`, comments, nested helper
 functions and `del` are ordinary Python and allowed (their old codes F007, F008, F009, F016, C002 and C004
-were retired in v0.2, as were F004 decorators and F012 `*args`/unpacking).
+were retired in v0.2, as were F004 decorators and F012 `*args`/unpacking; v0.3 retired F003, since classes
+with methods are now checked like everything else).
 
 | Code | Meaning | Use instead |
 | --- | --- | --- |
 | F001 | `eval`, `exec`, `compile` | plain code |
 | F002 | `getattr`, `setattr`, `vars`, `globals`, ..., dunder attributes | direct field access |
-| F003 | A class with methods, or a method inside a dataclass or Enum | a `@dataclass` / `record` for the data, functions for the behavior |
 | F005 | Relative or star imports, imports below the top | absolute imports at the top |
 | F006 | Importing a name through a module that only re-exports it | import from the origin |
 | F010 | `global`, `nonlocal` | parameters |

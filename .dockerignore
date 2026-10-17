@@ -1,0 +1,11 @@
+.git
+.github
+build
+dist
+*.egg-info
+__pycache__
+*.pyc
+tests
+examples
+vscode-jig
+integrations

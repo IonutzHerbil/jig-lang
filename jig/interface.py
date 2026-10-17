@@ -22,21 +22,40 @@ def render_interface(mod: ModuleInfo, project: Project) -> str:
     if len(lines) > 2:
         lines.append("")
 
-    for fi in mod.functions.values():
-        node = fi.node
-        ret = ast.unparse(node.returns) if node.returns is not None else "?"
-        lines.append(f"def {fi.name}({ast.unparse(node.args)}) -> {ret}")
-        if fi.docstring:
-            lines.append(f'    """{fi.docstring.strip().splitlines()[0]}"""')
-        effects = ", ".join(sorted(project.effects_of(mod, fi))) or "none"
-        lines.append(f"    effects: {effects}" + ("" if fi.effects is not None else "  (inferred)"))
-        for c in fi.requires:
-            lines.append(f"    requires: {c.text}")
-        for c in fi.ensures:
-            lines.append(f"    ensures: {c.text}")
-        if fi.examples:
-            lines.append("    examples:")
-            for ex in fi.examples:
-                lines.append(f"        {ex.call} -> {ex.expected or ex.kind}")
+    for ci in mod.classinfo.values():
+        public = {n: f for n, f in ci.methods.items() if not n.startswith("_") or n == "__init__"}
+        if ci.kind != "class" and not public:
+            continue
+        bases = f"({', '.join(ast.unparse(b) for b in ci.node.bases)})" if ci.node.bases else ""
+        lines.append(f"class {ci.name}{bases}:" if ci.kind == "class" else f"{ci.kind} {ci.name}, methods:")
+        for name, ann in ci.fields.items():
+            if not name.startswith("_"):
+                lines.append(f"    {name}: {ast.unparse(ann) if ann is not None else '?'}")
+        for fi in public.values():
+            _function(lines, fi, project, mod, indent="    ")
         lines.append("")
+
+    for fi in mod.functions.values():
+        _function(lines, fi, project, mod)
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _function(lines: list[str], fi, project: Project, mod: ModuleInfo, indent: str = "") -> None:
+    node = fi.node
+    ret = ast.unparse(node.returns) if node.returns is not None else "?"
+    deco = {"static": "@staticmethod ", "classmethod": "@classmethod ", "property": "@property "}.get(fi.kind, "")
+    is_async = "async " if isinstance(node, ast.AsyncFunctionDef) else ""
+    lines.append(f"{indent}{deco}{is_async}def {fi.name}({ast.unparse(node.args)}) -> {ret}")
+    if fi.docstring:
+        lines.append(f'{indent}    """{fi.docstring.strip().splitlines()[0]}"""')
+    effects = ", ".join(sorted(project.effects_of(mod, fi))) or "none"
+    lines.append(f"{indent}    effects: {effects}" + ("" if fi.effects is not None else "  (inferred)"))
+    for c in fi.requires:
+        lines.append(f"{indent}    requires: {c.text}")
+    for c in fi.ensures:
+        lines.append(f"{indent}    ensures: {c.text}")
+    if fi.examples:
+        lines.append(f"{indent}    examples:")
+        for ex in fi.examples:
+            lines.append(f"{indent}        {ex.call} -> {ex.expected or ex.kind}")
+    lines.append("")

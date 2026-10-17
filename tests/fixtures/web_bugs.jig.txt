@@ -1,0 +1,31 @@
+module todo.bugs
+
+from std.web import App, Html, Request, Response, h, redirect
+from todo.app import app
+
+
+@app.get("/about")
+def about(req: Request) -> Html:
+    """Web mistakes."""
+    return h.dvi(
+        h.a("Home", href="/"),
+        h.a("Todos", href="/todo"),
+        h.a("Docs", href="https://example.com/docs"),
+        h.input(name="q", placholder="search"),
+        h.div("x", klass="box"),
+        h.button("Toggle", post="/todos/7/toggel"),
+        h.form(h.button("Go"), action="/todos", method="get"),
+        h.p(req.from_data),
+    )
+
+
+@app.get("/users/{user_id}")
+def user(id: int) -> Html:
+    """Route parameter and handler parameter disagree."""
+    return h.p(str(id))
+
+
+@app.get("/about")
+def about_again(req: Request) -> Response:
+    """Same route twice; a redirect to nowhere."""
+    return redirect("/abuot")

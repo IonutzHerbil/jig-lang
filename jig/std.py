@@ -8,7 +8,22 @@ STD: dict[str, dict[str, str]] = {
     "std.option": {"Option": "type", "Some": "ctor", "Nothing": "value"},
     "std.record": {"replace": "func"},
     "std.ctx": {"Ctx": "type", "fixed_ctx": "func"},
+    "std.web": {"App": "type", "Html": "type", "Request": "type", "Response": "type", "h": "value", "page": "func",
+                "fragment": "func", "text": "func", "respond_json": "func", "redirect": "func"},
 }
+
+# std types whose values Jig follows, their members (with types, as annotations), and what std functions return.
+STD_TYPES = frozenset({("std.web", "App"), ("std.web", "Html"), ("std.web", "Request"), ("std.web", "Response")})
+STD_TYPE_MEMBERS: dict[str, dict[str, str]] = {
+    "App": {"get": "", "post": "", "put": "", "patch": "", "delete": "", "run": "", "handle": "", "routes": ""},
+    "Html": {"markup": "str"},
+    "Request": {"method": "str", "path": "str", "query": "dict[str, str]", "form": "dict[str, str]",
+                "headers": "dict[str, str]", "params": "dict[str, str]", "body": "str", "is_htmx": "bool"},
+    "Response": {"status": "int", "body": "str", "content_type": "str", "headers": "dict[str, str]"},
+}
+STD_RETURNS = {("std.web", "page"): "Html", ("std.web", "fragment"): "Html", ("std.web", "text"): "Response",
+               ("std.web", "respond_json"): "Response", ("std.web", "redirect"): "Response"}
+HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete"})
 
 def _safe_builtins() -> frozenset[str]:
     """Every Python builtin except the ones that break determinism, the closed world, or effect tracking."""
@@ -17,7 +32,7 @@ def _safe_builtins() -> frozenset[str]:
     banned = {
         "eval", "exec", "compile", "__import__", "getattr", "setattr", "hasattr", "delattr", "vars", "globals",
         "locals", "open", "input", "breakpoint", "exit", "quit", "help", "id", "hash", "memoryview",
-        "super", "property", "staticmethod", "classmethod", "copyright", "credits", "license",
+        "copyright", "credits", "license",
         "aiter", "anext", "SystemExit", "KeyboardInterrupt", "GeneratorExit",
     }
     return frozenset(n for n in dir(builtins) if not n.startswith("_") and n not in banned)
@@ -34,7 +49,7 @@ STDLIB: frozenset[str] = frozenset(
         "itertools", "functools", "operator", "heapq", "bisect", "string", "textwrap", "json", "unicodedata",
         "difflib", "copy", "base64", "binascii", "hashlib", "hmac", "struct", "typing", "array", "zlib", "html",
         "urllib.parse", "ipaddress", "calendar", "csv", "shlex", "fnmatch", "keyword", "graphlib", "dataclasses",
-        "enum",
+        "enum", "contextlib",
     }
 )
 
@@ -44,19 +59,22 @@ STDLIB_EFFECTS: dict[str, str] = {
     "random": "random", "secrets": "random", "uuid": "random", "time": "time", "datetime": "time",
     "os": "fs", "pathlib": "fs", "io": "fs", "shutil": "fs", "glob": "fs", "tempfile": "fs", "subprocess": "fs",
     "sys": "env", "socket": "net", "urllib.request": "net", "http": "net", "http.client": "net", "ssl": "net",
-    "smtplib": "net", "logging": "log", "sqlite3": "db",
+    "smtplib": "net", "logging": "log", "sqlite3": "db", "asyncio": "time",
 }
 STDLIB_PURE_NAMES: dict[str, frozenset[str]] = {
     "datetime": frozenset({"date", "timedelta", "timezone", "MINYEAR", "MAXYEAR"}),
     "os": frozenset({"path", "sep", "linesep", "pathsep", "extsep"}),
     "time": frozenset({"struct_time"}),
+    # asyncio coordinates coroutines; only waiting on the clock (sleep, wait_for timeouts) is the time effect
+    "asyncio": frozenset({"run", "gather", "create_task", "wait", "as_completed", "shield", "Queue", "Lock", "Event",
+                          "Semaphore", "Condition", "TaskGroup", "Task", "Future", "CancelledError", "TimeoutError",
+                          "iscoroutine", "iscoroutinefunction", "QueueEmpty", "QueueFull", "current_task"}),
     "uuid": frozenset({"UUID", "NAMESPACE_DNS", "NAMESPACE_URL", "uuid3", "uuid5"}),
 }
 
 # Standard-library modules that still cannot be used, and why.
 STDLIB_UNSUPPORTED: dict[str, str] = {
-    "threading": "concurrency is not supported yet",
-    "asyncio": "concurrency is not supported yet",
+    "threading": "threads share state Jig cannot check; use asyncio",
 }
 
 # Builtins that touch the outside world.

@@ -20,7 +20,7 @@ MODULE_RE = re.compile(r"module\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
 NEWTYPE_RE = re.compile(r"type\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\(\s*([A-Za-z_]\w*)\s*\)")
 RECORD_RE = re.compile(r"record\s+([A-Za-z_]\w*)\s*:")
 ENUM_RE = re.compile(r"enum\s+([A-Za-z_]\w*)\s*:")
-DEF_RE = re.compile(r"def\s+([A-Za-z_]\w*)\s*\(")
+DEF_RE = re.compile(r"(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(")
 CLAUSE_RE = re.compile(r"(effects|requires|ensures|examples)\s*:(.*)")
 
 

@@ -1,6 +1,9 @@
 """The checker: idiomatic Python passes, and the mistakes AIs make are caught with the right fix."""
 
 import importlib.util
+import shutil
+import subprocess
+import sys
 
 import pytest
 
@@ -112,3 +115,96 @@ if __name__ == "__main__":
 ''', encoding="utf-8")
     ok, diags, _ = check(tmp_path, py=True, examples=False)
     assert ok, diags
+
+
+def test_types_are_checked_at_every_boundary(tmp_path):
+    (tmp_path / "m.jig").write_text('''module m
+
+type Money = Money(int)
+type UserId = UserId(str)
+
+record Customer:
+    id: UserId
+    balance: Money
+
+record Order:
+    customer: UserId
+    total: Money
+
+
+def pay(c: Customer, amount: Money) -> Money:
+    """Remaining balance."""
+    return c.balance - amount
+
+
+def label(uid: str) -> str:
+    """A newtype may go where its base type is asked."""
+    return uid
+
+
+def broken(c: Customer, o: Order) -> Money:
+    """Mistakes a model makes."""
+    a = pay(o, o.total)
+    b = pay(c, "10")
+    d = pay(c, o.customer)
+    e = Customer(id="u1", balance=5)
+    f = Order(customer=c, total=c.balance)
+    g = label(c.id)
+    visited = {c.id}
+    visited.add(o.customer)
+    n: int = label("x")
+    return "done"
+''', encoding="utf-8")
+    ok, diags, _ = check(tmp_path, examples=False)
+    messages = [m for code, m in diags if code == "T010"]
+    assert messages == [
+        "'pay' parameter 'c' expects Customer, got Order",
+        "'pay' parameter 'amount' expects Money, got str",
+        "'pay' parameter 'amount' expects Money, got UserId",
+        "'Customer' field 'id' expects UserId, got str",
+        "'Customer' field 'balance' expects Money, got int",
+        "'Order' field 'customer' expects UserId, got Customer",
+        "'n' expects int, got str",
+        "the return value of 'broken' expects Money, got str",
+    ], diags
+    assert len(diags) == len(messages), diags  # label(c.id) and sets are fine
+
+
+def test_classes_methods_inheritance_and_properties(tmp_path):
+    shutil.copytree(FIXTURES / "classes", tmp_path / "classes")
+    (tmp_path / "classes" / "bank" / "bugs.jig").rename(tmp_path / "bugs.jig.txt")
+    ok, diags, examples = check(tmp_path / "classes")
+    assert ok, diags
+    assert examples == {"total": 7, "passed": 7, "ran": True}  # incl. requires and ? inside methods
+
+    (tmp_path / "bugs.jig.txt").rename(tmp_path / "classes" / "bank" / "bugs.jig")
+    ok, diags, _ = check(tmp_path / "classes", examples=False)
+    found = [(code, m.split(";")[0]) for code, m in diags]
+    assert found == [
+        ("T010", "'Account.deposit' parameter 'amount' expects Money, got str"),
+        ("T006", "'Account.deposit' takes 1 arguments, got 2: the signature is Account.deposit(amount)"),
+        ("R002", "class 'Account' has no attribute 'withdrawl'"),
+        ("T006", "'Account' is missing arguments: kind"),
+        ("T006", "'Account' takes 2 arguments, got 3: the signature is Account(owner, kind)"),
+        ("R002", "'Account' has no attribute 'ballance' to assign"),
+        ("R002", "'Account' has no attribute 'colour' to assign"),
+        ("T011", "record 'Statement' is immutable"),
+        ("T006", "'Savings.interest' takes 0 arguments, got 1: the signature is Savings.interest()"),
+        ("R002", "newtype 'Money' has no attribute 'lower'"),
+        ("T010", "'Account.fee' parameter 'kind' expects Kind, got str"),
+        ("T006", "'Kind.rate' takes 0 arguments, got 1: the signature is Kind.rate()"),
+        ("T002", "cannot mix Money with a plain value"),
+        ("T010", "the return value of 'mistakes' expects Money, got bool"),
+    ], found
+
+
+def test_async_functions_methods_and_unawaited_calls(tmp_path):
+    shutil.copytree(FIXTURES / "asyncjobs", tmp_path / "p")
+    ok, diags, examples = check(tmp_path / "p")
+    assert ok and examples == {"total": 4, "passed": 4, "ran": True}, diags
+    shutil.copy(FIXTURES / "async_bugs.jig.txt", tmp_path / "p" / "net" / "bugs.jig")
+    ok, diags, _ = check(tmp_path / "p", examples=False)
+    assert [c for c, _ in diags] == ["T012", "S001", "T012", "T012"], diags
+    result = subprocess.run([sys.executable, "-m", "jig", "run", str(FIXTURES / "asyncjobs"), "--entry", "net.jobs.main"],
+                            capture_output=True, text=True)
+    assert result.stdout.strip() == "8", result.stdout + result.stderr

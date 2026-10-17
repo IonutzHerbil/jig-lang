@@ -1,0 +1,44 @@
+module todo.app
+
+from std.web import App, Html, Request, h, page
+from todo.store import Store, Todo
+
+app = App()
+STORE = Store()
+
+
+def item(t: Todo) -> Html:
+    """One todo as a list item; clicking it toggles it."""
+    examples:
+        item(Todo(id=1, title="a <b>", done=False)) -> Html('<li id="todo-1" hx-post="/todos/1/toggle" hx-swap="outerHTML">a &lt;b&gt;</li>')
+    style = "text-decoration: line-through" if t.done else None
+    return h.li(t.title, id=f"todo-{t.id}", post=f"/todos/{t.id}/toggle", swap="outerHTML", style=style)
+
+
+@app.get("/")
+def home(req: Request) -> Html:
+    """The page."""
+    return page(
+        "Todos",
+        h.h1("Todos"),
+        h.form(
+            h.input(name="title", placeholder="What needs doing?", required=True),
+            h.button("Add", type="submit"),
+            post="/todos", target="#list", swap="beforeend",
+        ),
+        h.ul([item(t) for t in STORE.todos], id="list"),
+        head=h.link(rel="stylesheet", href="/static/style.css"),
+    )
+
+
+@app.post("/todos")
+def add(title: str) -> Html:
+    """Add a todo; answers with its list item."""
+    return item(STORE.add(title))
+
+
+@app.post("/todos/{todo_id}/toggle")
+def toggle(todo_id: int) -> Html:
+    """Toggle a todo."""
+    flipped = STORE.toggle(todo_id)
+    return item(flipped) if flipped else h.li("gone")

@@ -90,8 +90,9 @@ To add Jig to a project you already have: `jig init --py` inside it.
 Everything Python allows that does not break a guarantee is allowed: `while`, `try`/`except`, `None`,
 comments, dataclasses, `Enum`, exceptions, decorators, generators, `*args`, the standard library. Not allowed:
 `eval`, `getattr` and dunder access (they dodge the checks), `global` and mutable default arguments (hidden
-shared state), and classes with methods (data goes in a dataclass, behavior in functions). `async` and `with`
-are not supported yet.
+shared state), and `threading`. Classes, `async`/`await` and `with` work as in Python, and are checked: a
+class's attributes are the ones it declares or sets on `self`, and calls to it and its methods are checked
+against their signatures.
 
 ## Two ways to use it
 
@@ -145,7 +146,7 @@ Full reference: [LANGUAGE.md](jig/docs/LANGUAGE.md), or `jig doc` offline. Every
 
 | Command | Does |
 | --- | --- |
-| `jig new <dir> [--py]` | start a project with Claude Code set up |
+| `jig new <dir> [--py \| --web]` | start a project (plain Python, or a web app) with Claude Code and a Dockerfile set up |
 | `jig init [dir] [--py] [--user]` | add Jig and the Claude Code hooks to an existing project, or to every project |
 | `jig check <paths> [--py] [--pretty \| --for-model]` | every check, then runs examples |
 | `jig gate [paths] [--py]` | CI and pre-commit gate: every check, then the project's tests; changes nothing |
@@ -154,9 +155,52 @@ Full reference: [LANGUAGE.md](jig/docs/LANGUAGE.md), or `jig doc` offline. Every
 | `jig probe <paths>` | what each function returns on edge inputs (`""`, `0`, `[]`, `-1`) |
 | `jig interface <paths>` | signatures, inferred effects, contracts and examples, without bodies: the low-context view for agents |
 | `jig fmt <paths>` | canonical formatting of `.jig` files |
-| `jig build <paths> -o <dir>` | check, then write a plain Python package |
-| `jig run <paths> --entry module.function` | check, build, and call an entry point |
+| `jig build <paths> -o <dir> [--entry m.f]` | check, then write a plain Python package; with an entry point, `python <dir>` runs it |
+| `jig run [paths]` | check, build, and start the entry point from `.jig/config.json` (or `--entry`) |
+| `jig serve` | develop a web app: re-check on every save, rebuild, reload the browser |
+| `jig docker` | write a Dockerfile whose image builds only when every check and test passes |
 | `jig doc [topic]` | the language reference in the terminal: `jig doc` (overview and topics), `jig doc types`, `jig doc errors`, `jig doc T002`, `jig doc all` |
+| `jig repl` | try Jig interactively: every input is checked before it runs, and results show their type |
+| `jig lsp` | the language server behind the editor support |
+
+## Web apps
+
+```bash
+jig new myapp --web && cd myapp
+jig serve                     # http://localhost:8000: re-checks on every save, reloads the browser
+```
+
+`std.web` is HTML as typed functions plus [htmx](https://htmx.org) for interactivity, served by Python's standard
+library. Text is escaped by construction, so pages cannot be injected into. Every element and attribute is
+checked, and every link, form, htmx call and redirect is checked against the app's routes: a broken link is an
+error before anything runs, like a misspelled function.
+
+```python
+@app.post("/todos/{todo_id}/toggle")
+def toggle(todo_id: int) -> Html:
+    return item(STORE.toggle(todo_id))
+
+h.button("Done", post=f"/todos/{t.id}/toggel")   # error R004: no route answers POST /todos/x/toggel
+```
+
+## Docker
+
+Every project from `jig new` has a `Dockerfile` (or run `jig docker`): the image builds only when every check,
+example and test passes, and the image itself is plain Python running the compiled program, without Jig.
+
+```bash
+docker build -t myapp . && docker run --rm -p 8000:8000 myapp
+```
+
+To run Jig itself in a container: `docker build -t jig .` in this repository, then
+`docker run --rm -v "$PWD:/work" jig check --pretty .`
+
+## Editor
+
+`vscode-jig/` gives VS Code everything the checker knows, while you type: errors underlined on the exact name
+with the fix, hover with types, signatures, effects, contracts and examples, go to definition, completion
+after `.`, and the outline. Install it with `vscode-jig/install.ps1` (or `install.sh`). Other editors use the
+same language server: point their LSP client at `jig lsp`.
 
 ## Use it from Claude Code
 
@@ -173,9 +217,8 @@ In CI or a pre-commit hook, `jig gate --py .` runs every check and then the test
 
 ## Status
 
-Not yet supported: classes with methods, `async`, `with`, checking the types (not only the count and names) of
-library call arguments, attributes of values whose type cannot be inferred (such as the logger returned by
-`logging.getLogger`), and third-party packages without a manifest.
+Not yet supported: attributes of values whose type cannot be inferred (such as the logger returned by
+`logging.getLogger`), third-party packages without a manifest, and threads (use `asyncio`).
 
 ## Repository layout
 

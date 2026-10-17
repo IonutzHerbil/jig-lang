@@ -1,0 +1,33 @@
+module todo.store
+
+
+record Todo:
+    id: int
+    title: str
+    done: bool
+
+
+class Store:
+    """The todos, in memory."""
+
+    def __init__(self) -> None:
+        self.todos: list[Todo] = []
+        self.next_id = 1
+
+    def add(self, title: str) -> Todo:
+        """A new open todo."""
+        examples:
+            Store().add("milk") -> Todo(id=1, title="milk", done=False)
+        todo = Todo(id=self.next_id, title=title, done=False)
+        self.next_id = self.next_id + 1
+        self.todos.append(todo)
+        return todo
+
+    def toggle(self, todo_id: int) -> Todo | None:
+        """Flip one todo between done and open."""
+        for i, t in enumerate(self.todos):
+            if t.id == todo_id:
+                flipped = Todo(id=t.id, title=t.title, done=not t.done)
+                self.todos[i] = flipped
+                return flipped
+        return None

@@ -30,6 +30,10 @@ TOPICS = {
     "records": ("Records", "immutable data with checked fields"),
     "enums": ("Enums", "closed sets of variants; match must cover them all"),
     "result": ("Result and Option", "Ok/Err, Some/Nothing, and ? to pass failures up"),
+    "classes": ("Classes", "classes, methods, properties and inheritance, all checked"),
+    "async": ("Async", "async def, await, asyncio"),
+    "web": ("Web apps", "pages, routes and htmx with std.web; jig serve"),
+    "docker": ("Docker", "images that build only when every check passes"),
     "constants": ("Constants", "module-level values"),
     "style": ("One way to write it", "formatting and match instead of if-chains"),
     "forbidden": ("Not allowed", "the few Python features Jig rules out, and why"),
@@ -40,7 +44,7 @@ TOPICS = {
     "errors": (None, "every error code"),
 }
 
-OVERVIEW = """# Jig 0.2: Python plus guarantees
+OVERVIEW = """# Jig 0.3: Python plus guarantees
 
 Correct Python is valid Jig. Jig checks every name, import, field, call and type against what really
 exists, and runs the examples you write next to your functions, so code an AI wrote is verified before

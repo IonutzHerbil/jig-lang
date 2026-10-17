@@ -1,14 +1,15 @@
 {
   "name": "jig-lang",
   "displayName": "Jig Language Support",
-  "description": "Syntax highlighting and language support for Jig - a language where humans describe intent and LLMs generate code",
-  "version": "0.1.0",
+  "description": "Jig for VS Code: live checking as you type, hover with types and contracts, go to definition, completion, outline, and highlighting",
+  "version": "0.3.0",
   "publisher": "jig-lang",
   "engines": {
     "vscode": "^1.80.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Linters"
   ],
   "keywords": [
     "jig",
@@ -100,6 +101,26 @@
         "uiTheme": "vs-dark",
         "path": "./themes/jig-spec-focus-color-theme.json"
       }
+    ],
+    "configuration": {
+      "title": "Jig",
+      "properties": {
+        "jig.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "The Python that has Jig installed (pip install jig-lang). Empty: python on Windows, python3 elsewhere."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "jig.restartServer",
+        "title": "Jig: Restart Language Server"
+      }
     ]
-  }
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:jig"
+  ]
 }

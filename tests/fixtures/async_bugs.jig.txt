@@ -1,0 +1,18 @@
+module net.bugs
+
+import asyncio
+
+from net.jobs import Worker, double
+
+
+def wrong(w: Worker) -> int:
+    """Classic async mistakes."""
+    double(3)
+    x = await double(2)
+    return x
+
+
+async def wrong_too(w: Worker) -> None:
+    """Forgot to await."""
+    w.run(1)
+    asyncio.sleep(1)

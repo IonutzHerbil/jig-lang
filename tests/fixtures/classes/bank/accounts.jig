@@ -1,0 +1,128 @@
+module bank.accounts
+
+from dataclasses import dataclass
+from std.record import replace
+from std.result import Err, Ok, Result
+
+type Money = Money(int)
+
+
+enum Kind:
+    CHECKING
+    SAVINGS
+
+    def rate(self) -> int:
+        """Yearly interest in percent."""
+        match self:
+            case Kind.CHECKING:
+                return 0
+            case Kind.SAVINGS:
+                return 2
+
+
+record Statement:
+    owner: str
+    total: Money
+
+    def doubled(self) -> Money:
+        """Twice the total."""
+        examples:
+            Statement(owner="a", total=Money(5)).doubled() -> Money(10)
+        return self.total * 2
+
+
+enum BankError:
+    NO_FUNDS
+
+
+class Account:
+    """A bank account with a running balance."""
+
+    LIMIT = 1_000_000
+
+    def __init__(self, owner: str, kind: Kind) -> None:
+        self.owner = owner
+        self.kind = kind
+        self.balance: Money = Money(0)
+        self.history: list[Money] = []
+
+    def deposit(self, amount: Money) -> Money:
+        """Add money; returns the new balance."""
+        requires: amount > Money(0)
+        examples:
+            Account("a", Kind.CHECKING).deposit(Money(5)) -> Money(5)
+            Account("a", Kind.CHECKING).deposit(Money(0)) -> rejected
+        self.balance = self.balance + amount
+        self.history.append(amount)
+        return self.balance
+
+    def withdraw(self, amount: Money) -> Result[Money, BankError]:
+        """Take money out when there is enough."""
+        if amount > self.balance:
+            return Err(BankError.NO_FUNDS)
+        self.balance = self.balance - amount
+        return Ok(self.balance)
+
+    def move_to(self, other: "Account", amount: Money) -> Result[Money, BankError]:
+        """Withdraw here, deposit there."""
+        left = self.withdraw(amount)?
+        other.deposit(amount)
+        return Ok(left)
+
+    @property
+    def is_empty(self) -> bool:
+        """No money in it."""
+        return self.balance == Money(0)
+
+    @staticmethod
+    def fee(kind: Kind) -> Money:
+        """Monthly fee for a kind of account."""
+        return Money(0) if kind == Kind.SAVINGS else Money(3)
+
+    def statement(self) -> Statement:
+        """A summary."""
+        return Statement(owner=self.owner, total=self.balance)
+
+
+class Savings(Account):
+    """An account that earns interest."""
+
+    def __init__(self, owner: str) -> None:
+        super().__init__(owner, Kind.SAVINGS)
+
+    def interest(self) -> Money:
+        """One year of interest."""
+        examples:
+            Savings("a").interest() -> Money(0)
+        return self.balance * self.kind.rate() // 100
+
+
+@dataclass
+class Point:
+    x: int
+    y: int
+
+    def norm1(self) -> int:
+        """Manhattan length."""
+        examples:
+            Point(3, -4).norm1() -> 7
+        return abs(self.x) + abs(self.y)
+
+
+def transfer(a: Account, b: Account) -> Result[Money, BankError]:
+    """Move everything from a to b."""
+    examples:
+        transfer(Account("a", Kind.CHECKING), Account("b", Kind.CHECKING)) -> rejected
+    return a.move_to(b, a.balance)
+
+
+def open_savings(owner: str) -> Account:
+    """A subclass goes where its base class is asked."""
+    return Savings(owner)
+
+
+def overdraw(a: Account) -> Result[Money, BankError]:
+    """'?' inside a method passes the Err up."""
+    examples:
+        overdraw(Account("a", Kind.CHECKING)) -> Err(BankError.NO_FUNDS)
+    return a.move_to(Account("b", Kind.SAVINGS), Money(5))

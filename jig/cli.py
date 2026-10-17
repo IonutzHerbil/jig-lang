@@ -1,9 +1,12 @@
-"""jig command line: new, init, do, doc, check, gate, fmt, fix, probe, build, interface, run. JSON by default."""
+"""jig command line: new, init, do, doc, serve, repl, lsp, docker, check, gate, fmt, fix, probe, build, interface, run. JSON by default."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib
+import inspect
+import re
 import json
 import sys
 import tempfile
@@ -116,13 +119,47 @@ def cmd_fix(args: argparse.Namespace) -> int:
     return 1 if (args.check and changed) else 0
 
 
+def project_config(paths: list[str]) -> dict[str, Any]:
+    """.jig/config.json of the project the paths are in: {"python": bool, "entry": "module.function", ...}."""
+    start = Path(paths[0] if paths else ".").resolve()
+    for d in [start, *start.parents]:
+        f = d / ".jig" / "config.json"
+        if f.is_file():
+            try:
+                return json.loads(f.read_text(encoding="utf-8"))
+            except ValueError:
+                return {}
+    return {}
+
+
 def cmd_build(args: argparse.Namespace) -> int:
+    from .transpiler import entry_problem, write_launcher
+
     project, summary = check_project(args.paths, run_ex=True)
     if not summary["ok"]:
         print(json.dumps(summary, indent=2))
         return 1
-    written = build(project, Path(args.out))
-    print(json.dumps({"ok": True, "out": args.out, "files": [str(p) for p in written]}, indent=2))
+    entry = args.entry or project_config(args.paths).get("entry")
+    if entry and (problem := entry_problem(project, entry)):
+        print(json.dumps({"ok": False, "error": problem}, indent=2))
+        return 2
+    root = Path(args.paths[0]).resolve() if Path(args.paths[0]).is_dir() else None
+    written = build(project, Path(args.out), root=root)
+    if entry:
+        written.append(write_launcher(project, Path(args.out), entry))
+    print(json.dumps({"ok": True, "out": args.out, "entry": entry, "files": [str(p) for p in written]}, indent=2))
+    return 0
+
+
+def cmd_docker(args: argparse.Namespace) -> int:
+    from .project import docker_files
+
+    root = Path(args.dir).resolve()
+    config = project_config([str(root)])
+    for line in docker_files(root, bool(config.get("python")), config.get("entry"), force=args.force):
+        print(line)
+    name = re.sub(r"[^a-z0-9_.-]", "-", root.name.lower()).strip("-") or "app"
+    print(f"\nBuild and run:  docker build -t {name} {args.dir}  &&  docker run --rm {name}")
     return 0
 
 
@@ -154,9 +191,12 @@ def cmd_probe(args: argparse.Namespace) -> int:
 def cmd_new(args: argparse.Namespace) -> int:
     from .project import new
 
-    for line in new(Path(args.dir).resolve(), args.py):
+    if args.web and args.py:
+        raise SystemExit("--web makes a Jig web app; it cannot be combined with --py")
+    for line in new(Path(args.dir).resolve(), args.py, args.web):
         print(line)
-    print(f"\nNext: cd {args.dir} and open it in Claude Code, or run `jig check{' --py' if args.py else ''} --pretty .`")
+    then = "jig serve" if args.web else f"jig check{' --py' if args.py else ''} --pretty ."
+    print(f"\nNext: cd {args.dir} and open it in Claude Code, or run `{then}`")
     return 0
 
 
@@ -221,16 +261,32 @@ def cmd_do(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    from .transpiler import entry_problem
+
     project, summary = check_project(args.paths, run_ex=True)
     if not summary["ok"]:
         print(json.dumps(summary, indent=2))
         return 1
-    module_name, _, func_name = args.entry.rpartition(".")
-    mod = project.modules.get(module_name)
-    fi = mod.functions.get(func_name) if mod else None
-    if fi is None:
-        print(json.dumps({"error": f"unknown entry point '{args.entry}'"}))
+    entry = args.entry or project_config(args.paths).get("entry")
+    if not entry:
+        print(json.dumps({"error": "no entry point: pass --entry module.function, or set \"entry\" in .jig/config.json"}))
         return 2
+    if problem := entry_problem(project, entry):
+        print(json.dumps({"error": problem}))
+        return 2
+    module_name, _, func_name = entry.rpartition(".")
+    mod = project.modules[module_name]
+    fi = mod.functions.get(func_name)
+    if fi is None:  # a constant: a web app
+        with tempfile.TemporaryDirectory() as tmp:
+            build(project, Path(tmp))
+            sys.path.insert(0, tmp)
+            app = getattr(importlib.import_module(module_name), func_name)
+            if getattr(app, "__jig_app__", False):
+                app.run(port=args.port)
+                return 0
+            print(repr(app))
+            return 0
     with tempfile.TemporaryDirectory() as tmp:
         build(project, Path(tmp))
         sys.path.insert(0, tmp)
@@ -239,6 +295,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         first = fi.node.args.args[0].annotation if fi.node.args.args else None
         call_args = [runtime.real_ctx()] if getattr(first, "id", None) == "Ctx" else []
         result = func(*call_args)
+        if inspect.iscoroutine(result):
+            result = asyncio.run(result)
     print(repr(result))
     return 0
 
@@ -268,6 +326,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("build", help="check, then transpile to a Python package")
     p.add_argument("paths", nargs="+")
     p.add_argument("-o", "--out", required=True)
+    p.add_argument("--entry", help="module.function to start; adds __main__.py so `python <out>` runs it "
+                                   "(default: \"entry\" in .jig/config.json)")
     p.set_defaults(func=cmd_build)
 
     p = sub.add_parser("interface", help="print the interface view (no bodies)")
@@ -277,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("new", help="start a fresh project with Claude Code set up")
     p.add_argument("dir")
     p.add_argument("--py", action="store_true", help="a plain Python project checked by Jig, instead of .jig files")
+    p.add_argument("--web", action="store_true", help="a web app: std.web pages and routes, htmx, jig serve")
     p.set_defaults(func=cmd_new)
 
     p = sub.add_parser("init", help="add Jig to an existing project: Claude Code skill and hooks, config")
@@ -304,14 +365,32 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--raw", action="store_true", help="print the Markdown source instead")
     p.set_defaults(func=cmd_doc)
 
+    p = sub.add_parser("serve", help="develop a web app: re-check on every save, rebuild, and reload the browser")
+    p.add_argument("dir", nargs="?", default=".")
+    p.add_argument("--port", type=int, default=8000)
+    p.set_defaults(func=lambda args: __import__("jig.serve", fromlist=["main"]).main(args.dir, args.port))
+
+    p = sub.add_parser("repl", help="try Jig interactively: every input is checked before it runs")
+    p.add_argument("--fakes", action="store_true", help="libraries use their fakes (lib/<name>.fake.py)")
+    p.set_defaults(func=lambda args: __import__("jig.repl", fromlist=["main"]).main(args.fakes))
+
+    p = sub.add_parser("lsp", help="the language server for editors (Language Server Protocol on stdin/stdout)")
+    p.set_defaults(func=lambda args: __import__("jig.lsp", fromlist=["main"]).main())
+
     p = sub.add_parser("probe", help="show what each pure function returns on edge-case inputs")
     p.add_argument("paths", nargs="+")
     p.set_defaults(func=cmd_probe)
 
     p = sub.add_parser("run", help="check, build, and call an entry function")
-    p.add_argument("paths", nargs="+")
-    p.add_argument("--entry", required=True, help="module.function, e.g. shop.app.main")
+    p.add_argument("paths", nargs="*", default=["."])
+    p.add_argument("--entry", help="module.function, e.g. shop.app.main (default: \"entry\" in .jig/config.json)")
+    p.add_argument("--port", type=int, default=8000, help="port for a web app entry")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("docker", help="write a Dockerfile: the image builds only when every check and test passes")
+    p.add_argument("dir", nargs="?", default=".")
+    p.add_argument("--force", action="store_true", help="replace an existing Dockerfile")
+    p.set_defaults(func=cmd_docker)
 
     args = parser.parse_args(argv)
     return args.func(args)

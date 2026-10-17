@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import ast
 import difflib
+import keyword
+import sys
 import functools
 import re
 from collections.abc import Iterable
@@ -18,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import jig_runtime as web
 from . import std
 from .decisions import Decision, load_decisions
 from .diagnostics import Diagnostic, replace_fix
@@ -41,11 +44,6 @@ FORBIDDEN_NODES: dict[type, tuple[str, str]] = {
     ast.Import: ("F005", "imports belong at the top of the module"),
     ast.ImportFrom: ("F005", "imports belong at the top of the module"),
     ast.ClassDef: ("F014", "nested types are not allowed; declare records at the top level"),
-    ast.AsyncFunctionDef: ("S006", "async is not supported yet"),
-    ast.AsyncFor: ("S006", "async is not supported yet"),
-    ast.AsyncWith: ("S006", "async is not supported yet"),
-    ast.Await: ("S006", "async is not supported yet"),
-    ast.With: ("S006", "'with' is not supported; files and connections go through a lib manifest"),
 }
 
 
@@ -90,6 +88,29 @@ class FuncInfo:
     varkw: bool = False
     example_imports: set[str] = field(default_factory=set)  # names examples use without the module importing them
     docstring: str | None = None
+    cls: str | None = None  # the class a method belongs to
+    kind: str = "function"  # function | method | static | classmethod | property
+
+    @property
+    def qualname(self) -> str:
+        return f"{self.cls}.{self.name}" if self.cls else self.name
+
+    @property
+    def bound(self) -> int:
+        """How many leading parameters a call through an instance fills itself (self / cls)."""
+        return 1 if self.kind in ("method", "classmethod", "property") else 0
+
+
+@dataclass
+class ClassInfo:
+    """A class's members: what `obj.attr` may name."""
+
+    name: str
+    node: ast.ClassDef
+    kind: str  # class | record | enum
+    fields: dict[str, ast.expr | None] = field(default_factory=dict)  # instance attributes and their annotations
+    methods: dict[str, FuncInfo] = field(default_factory=dict)
+    class_attrs: dict[str, ast.expr | None] = field(default_factory=dict)
 
 
 @dataclass
@@ -108,7 +129,8 @@ class ModuleInfo:
     constants: dict[str, ast.AnnAssign | ast.Assign] = field(default_factory=dict)
     toplevel: list[ast.stmt] = field(default_factory=list)  # module-level code in a .py file, checked as written
     py_records: set[str] = field(default_factory=set)  # @dataclass classes: records built the Python way
-    classes: set[str] = field(default_factory=set)  # rejected classes, kept as names so uses do not cascade
+    classes: set[str] = field(default_factory=set)  # classes that are neither records nor enums
+    classinfo: dict[str, ClassInfo] = field(default_factory=dict)  # every class's members, records and enums too
 
     def declared_names(self) -> set[str]:
         return set(self.functions) | set(self.records) | set(self.enums) | set(self.newtypes) | set(self.constants) | self.classes
@@ -224,7 +246,7 @@ def _bound_names(stmts: list[ast.stmt]) -> set[str]:
     for node in ast.walk(ast.Module(body=stmts, type_ignores=[])):
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names.add(node.id)
-        elif isinstance(node, ast.FunctionDef):
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             names.add(node.name)
         elif isinstance(node, ast.ExceptHandler) and node.name:
             names.add(node.name)
@@ -256,15 +278,62 @@ def _unpacks(node: ast.Call) -> bool:
 
 def _element(t: tuple | None) -> tuple | None:
     """What iterating a value of type t gives: list/set elements, dict keys."""
-    if t and t[0] == "list":
+    if t and t[0] in ("list", "set"):
         return t[1]
     if t and t[0] == "dict":
         return t[1]
     return None
 
 
-def _signature(fi: FuncInfo) -> str:
-    return f"{fi.name}({', '.join(fi.params)})"
+# Types with a name and an identity: two of them match only when they are the same declaration.
+NAMED = frozenset({"record", "newtype", "enum", "librecord", "libnewtype", "libenum", "obj", "stdtype"})
+
+
+def type_key(t: tuple) -> tuple:
+    owner = t[1]
+    return (t[0].removeprefix("lib"), getattr(owner, "name", owner), t[2])
+
+
+def type_name(t: tuple | None) -> str:
+    """How a checker type reads in a message: Money, list[Customer], Result[Money, PayError]."""
+    if not t:
+        return "?"
+    kind = t[0]
+    if kind == "prim":
+        return t[1]
+    if kind in NAMED:
+        return t[2]
+    if kind == "none":
+        return "None"
+    if kind in ("list", "set"):
+        return f"{kind}[{type_name(t[1])}]"
+    if kind == "dict":
+        return f"dict[{type_name(t[1])}, {type_name(t[2])}]"
+    if kind == "result":
+        inner = type_name(t[2]) if len(t) > 2 and t[2] else "?"
+        if t[1] == "Option":
+            return f"Option[{inner}]"
+        if len(t) > 3 and t[3]:
+            return f"Result[{inner}, {t[3]}]"
+        return f"Ok({inner})"  # an Ok(...) value: its error type is not known
+    return kind
+
+
+def _signature(fi: FuncInfo, skip: int = 0) -> str:
+    return f"{fi.qualname}({', '.join(fi.params[skip:])})"
+
+
+def _method_kind(node: ast.FunctionDef) -> str:
+    for d in node.decorator_list:
+        if isinstance(d, ast.Name) and d.id in ("staticmethod", "classmethod", "property"):
+            return {"staticmethod": "static", "classmethod": "classmethod", "property": "property"}[d.id]
+        if isinstance(d, ast.Attribute) and d.attr in ("setter", "getter", "deleter"):
+            return "property"
+    return "method"
+
+
+# Instances, records and enum values: types whose attributes are a class's members.
+INSTANCES = frozenset({"obj", "record", "enum"})
 
 
 def _project_roots(files: list[Path]) -> list[Path]:
@@ -285,6 +354,8 @@ class Project:
     def __init__(self) -> None:
         self.modules: dict[str, ModuleInfo] = {}
         self._inferred: dict[tuple[str, str], set[str]] = {}
+        self._constant_types: dict[tuple[str, str], tuple | None] = {}
+        self.routes: list[tuple[str, str, Any, ModuleInfo, FuncInfo]] = []  # (method, pattern, regex, module, handler)
         self.manifests: dict[str, Manifest] = {}
         self.decisions: dict[str, Decision] = {}
         self.diags: list[Diagnostic] = []
@@ -328,8 +399,11 @@ class Project:
 
     # -- loading
 
-    def load(self, files: Iterable[Path]) -> None:
+    def load(self, files: Iterable[Path], sources: dict[str, str] | None = None) -> None:
+        """Load and check files; sources overrides what is on disk (an editor's unsaved buffers), keyed by
+        resolved path."""
         files = list(files)
+        sources = sources or {}
         for root in _project_roots(files):
             manifests, mdiags = load_manifests(root)
             decisions, ddiags = load_decisions(root)
@@ -338,7 +412,8 @@ class Project:
             self.diags += mdiags + ddiags
 
         for path in files:
-            text = Path(path).read_text(encoding="utf-8")
+            key = str(Path(path).resolve())
+            text = sources[key] if key in sources else Path(path).read_text(encoding="utf-8")
             pre, pdiags = preprocess(text, str(path))
             name = pre.module or module_name_for(Path(path))
             mod = ModuleInfo(name=name, file=str(path), text=text, pre=pre)
@@ -358,16 +433,28 @@ class Project:
             try:
                 mod.tree = ast.parse(pre.source, filename=str(path))
             except SyntaxError as e:
-                self.diag("S001", f"syntax error: {e.msg}", mod, e.lineno or 1, max((e.offset or 1) - 1, 0))
+                src_lines = text.split("\n")
+                line = src_lines[e.lineno - 1] if e.lineno and e.lineno <= len(src_lines) else ""
+                hint = ""
+                if kw := re.search(r"[(,]\s*(class|for|async|from|is|in|as)\s*=", line):
+                    word = kw.group(1)
+                    hint = f"; '{word}' is a Python keyword: write {word}_=... (it renders as the HTML attribute {word})"
+                self.diag("S001", f"syntax error: {e.msg}{hint}", mod, e.lineno or 1, max((e.offset or 1) - 1, 0))
 
             if name in self.modules:
                 self.diag("S007", f"module '{name}' is defined twice (also in {self.modules[name].file})", mod, pre.module_line)
                 continue
+            top = name.split(".")[0]
+            if top in sys.stdlib_module_names and not str(path).endswith(".py"):
+                self.diag("S009", f"'{top}' is a Python standard-library module: the built program would import that "
+                          f"instead of yours; rename the package (e.g. '{top}_app')", mod, pre.module_line or 1,
+                          fix={"kind": "replace_token", "from": top, "to": f"{top}_app", "confidence": "medium"})
             self.modules[name] = mod
 
         for mod in self.modules.values():
             if mod.tree is not None:
                 self._collect(mod)
+        self.routes = self._collect_routes()
         for mod in self.modules.values():
             if mod.tree is not None:
                 self._check_module(mod)
@@ -401,15 +488,21 @@ class Project:
         return None
 
     def type_desc(self, mod: ModuleInfo, name: str) -> tuple | None:
-        if name in ("int", "float", "str"):
+        if name in std.PRIMITIVES:
             return ("prim", name)  # a plain value: mixing it with a newtype is T002; its attributes are checked
         r = self.resolve(mod, name)
         if r is None:
             return None
-        if r[0] in ("record", "newtype"):
+        if r[0] in ("record", "newtype", "enum"):
             return (r[0], r[1], r[2])
+        if r[0] == "class" and r[2] in r[1].classinfo:
+            return ("obj", r[1], r[2])
+        if r[0] == "lib" and r[2] in r[1].enums:
+            return ("libenum", r[1], r[2])
         if r[0] == "std" and r[1] == "std.ctx" and r[2] == "Ctx":
             return ("ctx",)
+        if r[0] == "std" and (r[1], r[2]) in std.STD_TYPES:
+            return ("stdtype", r[1], r[2])
         if r[0] == "lib" and r[2] in r[1].records:
             return ("librecord", r[1], r[2])
         if r[0] == "py" and isinstance(getattr(stdlib_module(r[1]), r[2], None), type):
@@ -424,7 +517,7 @@ class Project:
             args = ann.slice.elts if isinstance(ann.slice, ast.Tuple) else [ann.slice]
             base = ann.value.id
             if base in ("list", "set") and args:
-                return ("list", self.ann_type(mod, args[0]))
+                return (base, self.ann_type(mod, args[0]))
             if base == "dict" and len(args) == 2:
                 return ("dict", self.ann_type(mod, args[0]), self.ann_type(mod, args[1]))
             if base in ("Result", "Option") and args:
@@ -442,23 +535,112 @@ class Project:
 
     def _lib_ann(self, manifest: Manifest, ann: ast.expr) -> tuple | None:
         if isinstance(ann, ast.Name):
-            if ann.id in ("int", "float"):
+            if ann.id in std.PRIMITIVES:
                 return ("prim", ann.id)
-            return ("librecord", manifest, ann.id) if ann.id in manifest.records else None
+            if ann.id in manifest.records:
+                return ("librecord", manifest, ann.id)
+            if ann.id in manifest.newtypes:
+                return ("libnewtype", manifest, ann.id)
+            if ann.id in manifest.enums:
+                return ("libenum", manifest, ann.id)
+            return None
         if isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name):
             args = ann.slice.elts if isinstance(ann.slice, ast.Tuple) else [ann.slice]
             if ann.value.id in ("list", "set") and args:
-                return ("list", self._lib_ann(manifest, args[0]))
+                return (ann.value.id, self._lib_ann(manifest, args[0]))
             if ann.value.id in ("Result", "Option") and args:
                 err = args[1].id if len(args) == 2 and isinstance(args[1], ast.Name) else None
                 return ("result", ann.value.id, self._lib_ann(manifest, args[0]), err)
         return None
 
+    def mismatch(self, want: tuple | None, got: tuple | None) -> bool:
+        """True when a value of type got can never be what want asks for. Unknown on either side is never a mismatch."""
+        if not want or not got:
+            return False
+        w, g = want[0], got[0]
+        if w == "prim":
+            if g == "prim":
+                return not (want[1] == got[1] or (want[1] == "float" and got[1] in ("int", "bool"))
+                            or (want[1] == "int" and got[1] == "bool"))
+            if g in ("newtype", "libnewtype"):  # a newtype is its base value, so it may go where the base is asked
+                base = got[1].newtypes[got[2]]
+                return self.mismatch(want, ("prim", base))
+            return g in NAMED or g in ("list", "set", "dict", "result", "none")
+        if w == "obj" and g == "obj":
+            return not self.is_subclass(got[1], got[2], want)
+        if w in NAMED:
+            return got[0] != w or type_key(got) != type_key(want) if g in NAMED or g in ("prim", "list", "set", "dict", "result", "none") else False
+        if w in ("list", "set", "dict"):
+            seqs = ("list", "set")
+            if not (g == w or (w in seqs and g in seqs)):
+                return g in NAMED or g in ("prim", "result", "none", "list", "set", "dict")
+            return any(self.mismatch(a, b) for a, b in zip(want[1:], got[1:]))
+        if w == "result":
+            if g != "result":
+                return g in NAMED or g in ("prim", "list", "set", "dict", "none")
+            if want[1] != got[1]:
+                return True
+            if len(want) > 2 and len(got) > 2 and self.mismatch(want[2], got[2]):
+                return True
+            return len(want) > 3 and len(got) > 3 and bool(want[3] and got[3]) and want[3] != got[3]
+        return False
+
+    def _collect_routes(self) -> list[tuple[str, str, Any, ModuleInfo, FuncInfo]]:
+        """Every `@app.get("/path")` handler in the project, checked against its route."""
+        routes = []
+        seen: dict[tuple[str, str], tuple[ModuleInfo, int]] = {}
+        for mod in self.modules.values():
+            for fi in mod.functions.values():
+                for d in fi.node.decorator_list:
+                    if not (isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr in std.HTTP_METHODS
+                            and isinstance(d.func.value, ast.Name) and d.args and isinstance(d.args[0], ast.Constant)
+                            and isinstance(d.args[0].value, str)):
+                        continue
+                    r = self.resolve(mod, d.func.value.id)
+                    if not (r and r[0] == "constant" and self.constant_type(r[1], r[2]) == ("stdtype", "std.web", "App")):
+                        continue
+                    method, pattern = d.func.attr.upper(), d.args[0].value
+                    key = (method, pattern)
+                    if key in seen:
+                        first = seen[key]
+                        self.diag("S007", f"route {method} {pattern} is defined twice (also in {first[0].name} line {first[1]})",
+                                  mod, d.lineno, function=fi.name)
+                        continue
+                    seen[key] = (mod, d.lineno)
+                    if not pattern.startswith("/"):
+                        self.diag("S001", f"a route starts with '/': got '{pattern}'", mod, d.lineno, function=fi.name)
+                    params = re.findall(r"\{(\w+)\}", pattern)
+                    for name in params:
+                        if name not in fi.params and not fi.varkw:
+                            self.diag("T006", f"route '{pattern}' passes '{name}', but '{fi.name}' has no parameter '{name}'",
+                                      mod, d.lineno, function=fi.name,
+                                      fix={"kind": "review", "hint": f"add a parameter `{name}: str` (or int) to {fi.name}"})
+                    routes.append((method, pattern, web._route_regex(pattern), mod, fi))
+        return routes
+
+    def route_for(self, method: str, path: str) -> bool:
+        """Whether some route (or the static folder) answers method + path."""
+        if method == "GET" and path.startswith("/static/"):
+            return True
+        return any(m == method and regex.match(path) for m, _, regex, _, _ in self.routes)
+
+    def constant_type(self, mod: ModuleInfo, name: str) -> tuple | None:
+        """A module constant's type: its annotation, or else what its value is (`ALICE = Customer(...)`)."""
+        node = mod.constants[name]
+        if getattr(node, "annotation", None) is not None:
+            return self.ann_type(mod, node.annotation)
+        key = (mod.name, name)
+        if key not in self._constant_types:
+            self._constant_types[key] = None  # a constant defined through itself stays unknown
+            value = node.value
+            self._constant_types[key] = BodyChecker(self, mod, None, set(), {}, silent=True).type_of(value) if value else None
+        return self._constant_types[key]
+
     def effects_of(self, mod: ModuleInfo, fi: FuncInfo) -> set[str]:
         """Declared effects, or the ones its body uses when it declares none (inferred, recursion-safe)."""
         if fi.effects is not None:
             return fi.effects
-        key = (mod.name, fi.name)
+        key = (mod.name, fi.qualname)
         if key not in self._inferred:
             self._inferred[key] = set()
             checker, _ = self._body_checker(mod, fi, silent=True)
@@ -527,20 +709,13 @@ class Project:
                     self._collect_dataclass(mod, stmt)
                 elif self._is_enum_class(mod, stmt):
                     self._collect_enum_class(mod, stmt)
-                elif self._is_exception_class(mod, stmt):
-                    mod.classes.add(stmt.name)
                 else:
                     mod.classes.add(stmt.name)
-                    if not mod.file.endswith(".py"):
-                        self.diag(
-                            "F003", "classes with behavior are not supported: use a @dataclass (or record) for the "
-                            "data and functions that take it for the behavior; Enum subclasses work", mod, stmt.lineno,
-                        )
-            elif isinstance(stmt, ast.FunctionDef):
+                kind = "record" if stmt.name in mod.records else "enum" if stmt.name in mod.enums else "class"
+                mod.classinfo[stmt.name] = self._collect_class(mod, stmt, kind)
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 claim(stmt.name, stmt)
                 mod.functions[stmt.name] = self._collect_function(mod, stmt)
-            elif isinstance(stmt, ast.AsyncFunctionDef):
-                self.diag("S006", "async is not supported in v0", mod, stmt.lineno)
             elif (
                 isinstance(stmt, ast.Assign)
                 and len(stmt.targets) == 1
@@ -636,11 +811,8 @@ class Project:
                 continue
             if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name):
                 fields[s.target.id] = (s.annotation, s.value is not None)
-            elif isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self.diag("F003", f"methods are not supported: write '{s.name}' as a function that takes a {node.name}",
-                          mod, s.lineno)
-            else:
-                self.diag("S006", "a dataclass may only contain typed fields: name: type", mod, s.lineno)
+            elif not isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Pass)):
+                self.diag("S006", "a dataclass may only contain typed fields and methods", mod, s.lineno)
         mod.records[node.name] = fields
         mod.py_records.add(node.name)
 
@@ -651,11 +823,8 @@ class Project:
                 continue
             if isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name):
                 variants.append(s.targets[0].id)
-            elif isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self.diag("F003", f"methods are not supported: write '{s.name}' as a function that takes a {node.name}",
-                          mod, s.lineno)
-            else:
-                self.diag("S006", "an Enum may only list variants: NAME = value", mod, s.lineno)
+            elif not isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Pass)):
+                self.diag("S006", "an Enum may only list variants (NAME = value) and methods", mod, s.lineno)
         mod.enums[node.name] = variants
 
     def _collect_record(self, mod: ModuleInfo, node: ast.ClassDef) -> None:
@@ -667,8 +836,8 @@ class Project:
                 continue
             if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name):
                 fields[s.target.id] = (s.annotation, s.value is not None)
-            else:
-                self.diag("S006", "records may only contain typed fields: name: type", mod, s.lineno)
+            elif not isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.diag("S006", "records may only contain typed fields (name: type) and methods", mod, s.lineno)
         if not fields:
             self.diag("S006", f"record '{node.name}' has no fields", mod, node.lineno)
         mod.records[node.name] = fields
@@ -680,11 +849,111 @@ class Project:
                 continue
             if isinstance(s, ast.Expr) and isinstance(s.value, ast.Name):
                 variants.append(s.value.id)
-            else:
-                self.diag("S006", "enums may only list variant names, one per line", mod, s.lineno)
+            elif not isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.diag("S006", "enums may only list variant names, one per line, and methods", mod, s.lineno)
         if not variants:
             self.diag("S006", f"enum '{node.name}' has no variants", mod, node.lineno)
         mod.enums[node.name] = variants
+
+    def _collect_class(self, mod: ModuleInfo, node: ast.ClassDef, kind: str) -> ClassInfo:
+        """Methods, instance attributes (class-level annotations and every `self.x = ...` in a method) and class
+        attributes."""
+        ci = ClassInfo(name=node.name, node=node, kind=kind)
+        for i, s in enumerate(node.body):
+            if i == 0 and _is_docstring(s):
+                continue
+            if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fi = self._collect_function(mod, s)
+                fi.cls = node.name
+                fi.kind = _method_kind(s)
+                if s.name in ci.methods and fi.kind != "property":
+                    self.diag("S007", f"'{node.name}.{s.name}' is defined twice", mod, s.lineno)
+                if s.name not in ci.methods or fi.kind != "property" or ci.methods[s.name].kind != "property":
+                    ci.methods[s.name] = fi
+            elif kind == "class" and isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name):
+                ci.fields[s.target.id] = s.annotation
+                if s.value is not None:
+                    ci.class_attrs[s.target.id] = s.annotation
+            elif kind == "class" and isinstance(s, ast.Assign):
+                for t in s.targets:
+                    if isinstance(t, ast.Name):
+                        ci.class_attrs[t.id] = None
+        for fi in ci.methods.values():
+            if fi.kind not in ("method", "property") or not fi.params:
+                continue
+            me = fi.params[0]
+            annotations = {a.arg: a.annotation for a in fi.node.args.args + fi.node.args.kwonlyargs}
+            for n in ast.walk(fi.node):
+                target, ann = None, None
+                if isinstance(n, ast.AnnAssign):
+                    target, ann = n.target, n.annotation
+                elif isinstance(n, ast.Assign):
+                    for t in n.targets:
+                        if isinstance(t, ast.Attribute):
+                            target = t
+                    if isinstance(n.value, ast.Name) and n.value.id in annotations:
+                        ann = annotations[n.value.id]
+                elif isinstance(n, (ast.AugAssign)):
+                    target = n.target
+                if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == me:
+                    if kind != "class" and isinstance(n, (ast.Assign, ast.AnnAssign)) and fi.name != "__post_init__":
+                        continue  # reported as T011 when the method is checked
+                    if ci.fields.get(target.attr) is None:
+                        ci.fields[target.attr] = ann
+        return ci
+
+    def class_of(self, owner: ModuleInfo, name: str) -> tuple[list[tuple[ModuleInfo, ClassInfo]], bool]:
+        """The class and its project base classes, nearest first; and whether some base is outside the project
+        (an exception, a library class), so its attributes cannot all be known."""
+        chain: list[tuple[ModuleInfo, ClassInfo]] = []
+        open_ = False
+        todo = [(owner, name)]
+        while todo and len(chain) < 20:
+            m, n = todo.pop(0)
+            ci = m.classinfo.get(n)
+            if ci is None:
+                open_ = True
+                continue
+            if any(x is ci for _, x in chain):
+                continue
+            chain.append((m, ci))
+            if ci.node.keywords or any(self._decorator_name(m, d) != "dataclasses.dataclass" for d in ci.node.decorator_list):
+                open_ = True  # a metaclass or a decorator may add members
+            if any(f.name == "__getattr__" for f in ci.methods.values()):
+                open_ = True
+            for b in ci.node.bases:
+                r = self.resolve(m, b.id) if isinstance(b, ast.Name) else None
+                if r and r[0] in ("class", "record") and r[2] in r[1].classinfo:
+                    todo.append((r[1], r[2]))
+                elif not (ci.kind == "enum" and r and r[0] == "py"):
+                    open_ = True
+        return chain, open_
+
+    def member(self, owner: ModuleInfo, name: str, attr: str) -> tuple[str, ModuleInfo, Any] | None:
+        """What `x.attr` names on an instance of class name: ("field", module, annotation), ("method", module,
+        FuncInfo), or ("classattr", module, annotation)."""
+        chain, _ = self.class_of(owner, name)
+        for m, ci in chain:
+            if attr in ci.methods:
+                return ("method", m, ci.methods[attr])
+            if ci.kind == "record" and attr in m.records.get(ci.name, {}):
+                return ("field", m, m.records[ci.name][attr][0])
+            if attr in ci.fields:
+                return ("field", m, ci.fields[attr])
+            if attr in ci.class_attrs:
+                return ("classattr", m, ci.class_attrs[attr])
+            if ci.kind == "enum" and attr in m.enums.get(ci.name, []):
+                return ("classattr", m, None)
+        return None
+
+    def members(self, owner: ModuleInfo, name: str) -> list[str]:
+        names: set[str] = set()
+        for m, ci in self.class_of(owner, name)[0]:
+            names |= set(ci.methods) | set(ci.fields) | set(ci.class_attrs) | set(m.records.get(ci.name, {}))
+        return sorted(n for n in names if not n.startswith("__"))
+
+    def is_subclass(self, owner: ModuleInfo, name: str, base: tuple) -> bool:
+        return any(type_key(("obj", m, ci.name)) == type_key(base) for m, ci in self.class_of(owner, name)[0])
 
     def _collect_function(self, mod: ModuleInfo, node: ast.FunctionDef) -> FuncInfo:
         a = node.args
@@ -839,7 +1108,7 @@ class Project:
                 if not UPPER.match(v):
                     self._naming(mod, v, "enum variants use UPPER_CASE")
         for name, node in mod.constants.items():
-            if not UPPER.match(name):
+            if not UPPER.match(name) and self.constant_type(mod, name) != ("stdtype", "std.web", "App"):
                 self._naming(mod, name, "constants use UPPER_CASE", node.lineno)
             checker = BodyChecker(self, mod, None, set(), {})
             if isinstance(node, ast.AnnAssign):
@@ -848,6 +1117,18 @@ class Project:
                 checker.visit(node.value)
             if checker.used_effects and not mod.file.endswith(".py"):
                 self.diag("E004", f"constant '{name}' must be pure; it uses {sorted(checker.used_effects)}", mod, node.lineno)
+
+        for ci in mod.classinfo.values():
+            if ci.kind == "class" and not PASCAL.match(ci.name):
+                self._naming(mod, ci.name, "types use PascalCase")
+            checker = BodyChecker(self, mod, None, set(), {})
+            for b in ci.node.bases + [k.value for k in ci.node.keywords] + ci.node.decorator_list:
+                checker.visit(b)
+            for stmt in ci.node.body:
+                if isinstance(stmt, (ast.AnnAssign, ast.Assign)) and ci.kind != "enum":
+                    checker.visit(stmt)
+            for fi in ci.methods.values():
+                self._check_function(mod, fi)
 
         if mod.toplevel:
             checker = BodyChecker(self, mod, None, _bound_names(mod.toplevel), {})
@@ -863,17 +1144,19 @@ class Project:
 
     def _check_function(self, mod: ModuleInfo, fi: FuncInfo) -> None:
         node = fi.node
-        fn = fi.name
+        fn = fi.qualname
 
         def err(code: str, msg: str, line: int, col: int = 0, **kw: Any) -> None:
             self.diag(code, msg, mod, line, col, function=fn, **kw)
 
-        if not SNAKE.match(fn):
-            err("S003", f"'{fn}': functions use snake_case", node.lineno, node.col_offset)
+        if not SNAKE.match(fi.name):
+            err("S003", f"'{fi.name}': functions use snake_case", node.lineno, node.col_offset)
 
         a = node.args
         all_args = a.posonlyargs + a.args + a.kwonlyargs
-        for arg in all_args:
+        for k, arg in enumerate(all_args):
+            if k < fi.bound:
+                continue  # self / cls
             if arg.annotation is None:
                 err("T004", f"parameter '{arg.arg}' has no type, so calls to '{fn}' are checked less", arg.lineno, arg.col_offset, severity="warning", fix={"kind": "insert_annotation", "hint": f"{arg.arg}: <type>"})
             if not SNAKE.match(arg.arg):
@@ -886,7 +1169,7 @@ class Project:
             )
             if mutable:
                 err("F013", "mutable default values are not allowed: they are shared between calls", d.lineno, d.col_offset)
-        if node.returns is None:
+        if node.returns is None and not (fi.cls and fi.name.startswith("__")):
             err("T004", f"'{fn}' has no return type, so its callers are checked less", node.lineno, severity="warning", fix={"kind": "insert_annotation", "hint": "-> <type>"})
 
         checker, var_types = self._body_checker(mod, fi)
@@ -944,6 +1227,10 @@ class Project:
             t = self.ann_type(mod, arg.annotation)
             if t:
                 var_types[arg.arg] = t
+        if fi.cls and fi.bound and all_args:
+            ci = mod.classinfo[fi.cls]
+            me = {"record": "record", "enum": "enum"}.get(ci.kind, "obj")
+            var_types[all_args[0].arg] = ("class_type", mod, fi.cls) if fi.kind == "classmethod" else (me, mod, fi.cls)
         star = {x.arg for x in (a.vararg, a.kwarg) if x is not None}
         checker = BodyChecker(self, mod, fi, set(fi.params) | star | _bound_names(body), var_types, silent=silent)
         for d in node.decorator_list:
@@ -986,6 +1273,7 @@ class BodyChecker(ast.NodeVisitor):
         self.var_types = dict(var_types)
         self.used_effects: dict[str, list[tuple[int, int, str | None]]] = {}
         self.names_used: set[str] = set()
+        self._async = [isinstance(func.node, ast.AsyncFunctionDef) if func else False]
         self._chain_seen: set[int] = set()
 
     # -- helpers
@@ -1009,6 +1297,15 @@ class BodyChecker(ast.NodeVisitor):
         self.used_effects.setdefault(effect, []).append((node.lineno, node.col_offset, via))  # type: ignore[attr-defined]
 
     def type_of(self, e: ast.expr) -> tuple | None:
+        if isinstance(e, ast.Await):
+            return self.type_of(e.value)
+        if isinstance(e, ast.Constant):
+            if e.value is None:
+                return ("none",)
+            kind = type(e.value).__name__
+            return ("prim", kind) if kind in std.PRIMITIVES else None
+        if isinstance(e, ast.JoinedStr):
+            return ("prim", "str")
         if isinstance(e, ast.Name):
             if e.id in self.var_types:
                 return self.var_types[e.id]
@@ -1017,8 +1314,14 @@ class BodyChecker(ast.NodeVisitor):
             r = self.p.resolve(self.mod, e.id)
             if r and r[0] == "enum":
                 return ("enum_type", r[1], r[2])
+            if r and r[0] == "lib" and r[2] in r[1].enums:
+                return ("libenum_type", r[1], r[2])
+            if r and r[0] in ("class", "record") and r[2] in r[1].classinfo:
+                return ("class_type", r[1], r[2])
+            if r and r[0] == "std" and r[1] == "std.web" and r[2] == "h":
+                return ("web_h",)
             if r and r[0] == "constant":
-                return self.p.ann_type(r[1], getattr(r[1].constants[r[2]], "annotation", None))
+                return self.p.constant_type(r[1], r[2])
             if e.id in self.mod.pymods:
                 name = self.mod.pymods[e.id][0]
                 return ("projmod", self.p.modules[name]) if name in self.p.modules else ("pymod", name)
@@ -1027,23 +1330,44 @@ class BodyChecker(ast.NodeVisitor):
             base = self.type_of(e.value)
             if base is None:
                 return None
-            if base[0] == "record":
-                owner, rec = base[1], base[2]
-                fld = owner.records[rec].get(e.attr)
-                return self.p.ann_type(owner, fld[0]) if fld else None
+            if base[0] == "stdtype":
+                member = std.STD_TYPE_MEMBERS.get(base[2], {}).get(e.attr)
+                return self.p.ann_type(self.mod, ast.parse(member, mode="eval").body) if member else None
+            if base[0] in INSTANCES or base[0] == "class_type":
+                found = self.p.member(base[1], base[2], e.attr) if base[2] in base[1].classinfo else None
+                if found and found[0] in ("field", "classattr"):
+                    return self.p.ann_type(found[1], found[2]) if found[2] is not None else None
+                if found and found[2].kind == "property":
+                    return self.p.ann_type(found[1], found[2].node.returns)
+                if base[0] == "record" and not found:
+                    fld = base[1].records[base[2]].get(e.attr)
+                    return self.p.ann_type(base[1], fld[0]) if fld else None
+                if base[0] != "enum_type" and not (base[0] == "class_type" and base[2] in base[1].enums):
+                    return None
             if base[0] == "librecord":
                 fields = dict(base[1].records.get(base[2], []))
                 return self.p.lib_type(base[1], fields[e.attr]) if e.attr in fields else None
+            if base[0] == "libenum_type" and e.attr in base[1].enums[base[2]]:
+                return ("libenum", base[1], base[2])
             if base[0] == "result" and e.attr == "value":
                 return base[2] if len(base) > 2 else None
             if base[0] == "ctx" and e.attr in std.CTX_PARTS:
                 return ("ctx_part", e.attr)
             if base[0] == "pymod" and f"{base[1]}.{e.attr}" in std.STDLIB:
                 return ("pymod", f"{base[1]}.{e.attr}")
+            if base[0] == "enum_type" and e.attr in base[1].enums[base[2]]:
+                return ("enum", base[1], base[2])
             return None
         if isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute):
             owner = self.type_of(e.func.value)
             method = e.func.attr
+            if owner == ("web_h",):
+                return ("stdtype", "std.web", "Html")
+            if owner and (owner[0] in INSTANCES or owner[0] == "class_type") and owner[2] in owner[1].classinfo:
+                found = self.p.member(owner[1], owner[2], method)
+                if found and found[0] == "method":
+                    return self.p.ann_type(found[1], found[2].node.returns)
+                return None
             if owner and owner[0] == "projmod":
                 r = self.p.resolve(owner[1], method)
                 if r and r[0] == "function":
@@ -1055,27 +1379,55 @@ class BodyChecker(ast.NodeVisitor):
             if owner and owner[0] == "result" and method == "unwrap_or":
                 return owner[2] if len(owner) > 2 else None
             return None
+        if isinstance(e, (ast.List, ast.Set)) and e.elts:
+            elems = [self.type_of(x) for x in e.elts]
+            first = elems[0]
+            return ("list" if isinstance(e, ast.List) else "set", first if first and all(x and not self.p.mismatch(first, x) and not self.p.mismatch(x, first) for x in elems) else None)
         if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id in ("sorted", "list", "reversed") and e.args:
             inner = self.type_of(e.args[0])
             elem = _element(inner)
-            return ("list", elem) if inner and inner[0] in ("list", "dict") else None
+            return ("list", elem) if inner and inner[0] in ("list", "set", "dict") else None
         if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id not in self.locals:
             r = self.p.resolve(self.mod, e.func.id)
             if r and r[0] in ("record", "newtype"):
                 return (r[0], r[1], r[2])
+            if r and r[0] == "class" and r[2] in r[1].classinfo:
+                return ("obj", r[1], r[2])
+            if r and r[0] == "lib" and r[2] in r[1].records | r[1].newtypes.keys():
+                return ("librecord" if r[2] in r[1].records else "libnewtype", r[1], r[2])
             if r and r[0] == "py" and isinstance(getattr(stdlib_module(r[1]), r[2], None), type):
                 return ("pyinst", r[1], r[2])
+            if r and r[0] == "std" and (r[1], r[2]) in std.STD_TYPES:
+                return ("stdtype", r[1], r[2])
+            if r and r[0] == "std" and (r[1], r[2]) in std.STD_RETURNS:
+                return ("stdtype", r[1], std.STD_RETURNS[(r[1], r[2])])
             if r and r[0] == "std" and r[2] in ("Ok", "Err", "Some"):
-                return ("result", "Option" if r[2] == "Some" else "Result")
+                payload = self.type_of(e.args[0]) if r[2] != "Err" and len(e.args) == 1 else None
+                return ("result", "Option" if r[2] == "Some" else "Result", payload)
             if r and r[0] == "function":
                 return self.p.ann_type(r[1], r[1].functions[r[2]].node.returns)
             if r and r[0] == "lib":
                 return self.p.lib_type(r[1], r[1].returns.get(r[2], "")) if r[1].returns.get(r[2]) else None
             return None
-        if isinstance(e, ast.BinOp) and isinstance(e.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod)):
-            for side in (self.type_of(e.left), self.type_of(e.right)):
-                if side and side[0] == "newtype":
+        if isinstance(e, ast.BinOp) and isinstance(e.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod, ast.Div)):
+            left, right = self.type_of(e.left), self.type_of(e.right)
+            for side in (left, right):
+                if side and side[0] == "newtype" and not isinstance(e.op, ast.Div):
                     return side
+            if left and right and left[0] == right[0] == "prim":
+                a, b = left[1], right[1]
+                if isinstance(e.op, ast.Div) and {a, b} <= {"int", "float", "bool"}:
+                    return ("prim", "float")
+                if {a, b} <= {"int", "bool"}:
+                    return ("prim", "int")
+                if {a, b} <= {"int", "float", "bool"}:
+                    return ("prim", "float")
+                if a == b == "str" and isinstance(e.op, ast.Add):
+                    return ("prim", "str")
+        if isinstance(e, ast.UnaryOp) and isinstance(e.op, (ast.USub, ast.UAdd)):
+            return self.type_of(e.operand)
+        if isinstance(e, (ast.Compare, ast.BoolOp)) or (isinstance(e, ast.UnaryOp) and isinstance(e.op, ast.Not)):
+            return ("prim", "bool") if not isinstance(e, ast.BoolOp) else None
         return None
 
     # -- structure
@@ -1138,6 +1490,89 @@ class BodyChecker(ast.NodeVisitor):
             else:
                 self.var_types.pop(node.targets[0].id, None)
 
+    def _in_function(self, node: ast.AST, is_async: bool) -> None:
+        self._nested = getattr(self, "_nested", 0) + 1  # a nested helper's returns are its own
+        self._async.append(is_async)
+        self.generic_visit(node)
+        self._async.pop()
+        self._nested -= 1
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._in_function(node, False)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._in_function(node, True)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._in_function(node, False)
+
+    def visit_Await(self, node: ast.Await) -> None:
+        if not self._async[-1]:
+            self.err("S001", "'await' is only valid inside an 'async def'", node)
+        self.visit(node.value)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        if not self._async[-1]:
+            self.err("S001", "'async for' is only valid inside an 'async def'", node)
+        self.generic_visit(node)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        if not self._async[-1]:
+            self.err("S001", "'async with' is only valid inside an 'async def'", node)
+        self.visit_With(node)  # type: ignore[arg-type]
+
+    def visit_Expr(self, node: ast.Expr) -> None:
+        if isinstance(node.value, ast.Call) and (name := self._coroutine(node.value)):
+            self.err("T012", f"'{name}' is async: this call makes a coroutine that never runs; write `await {ast.unparse(node.value)}`",
+                     node.value, fix={"kind": "replace_token", "from": ast.unparse(node.value), "to": f"await {ast.unparse(node.value)}",
+                                      "confidence": "high"} if self._async[-1] else {"kind": "review", "hint":
+                                      "await it inside an async def, or run it with asyncio.run(...)"})
+        self.generic_visit(node)
+
+    def _coroutine(self, call: ast.Call) -> str | None:
+        """The name of the async function a call starts, if it is one."""
+        import inspect
+
+        f = call.func
+        if isinstance(f, ast.Name) and f.id not in self.locals:
+            r = self.p.resolve(self.mod, f.id)
+            if r and r[0] == "function" and isinstance(r[1].functions[r[2]].node, ast.AsyncFunctionDef):
+                return f.id
+            if r and r[0] == "py" and inspect.iscoroutinefunction(getattr(stdlib_module(r[1]), r[2], None)):
+                return f"{r[1]}.{r[2]}"
+        if isinstance(f, ast.Attribute):
+            owner = self.type_of(f.value)
+            if owner and (owner[0] in INSTANCES or owner[0] == "class_type") and owner[2] in owner[1].classinfo:
+                found = self.p.member(owner[1], owner[2], f.attr)
+                if found and found[0] == "method" and isinstance(found[2].node, ast.AsyncFunctionDef):
+                    return found[2].qualname
+            if owner and owner[0] == "pymod" and inspect.iscoroutinefunction(getattr(stdlib_module(owner[1]), f.attr, None)):
+                return f"{owner[1]}.{f.attr}"
+        return None
+
+    def type_error(self, want: tuple | None, value: ast.expr, what: str) -> None:
+        """T010 when value's type can never be want."""
+        got = self.type_of(value)
+        if not self.p.mismatch(want, got):
+            return
+        fix = None
+        if want and want[0] in ("newtype", "libnewtype") and got and got[0] == "prim":
+            owner = want[1]
+            base = owner.newtypes[want[2]]
+            if base == got[1] or (base == "float" and got[1] == "int"):
+                txt = ast.unparse(value)
+                fix = {"kind": "replace_token", "from": txt, "to": f"{want[2]}({txt})", "confidence": "high"}
+        elif want and want[0] == "prim" and got and got[0] in ("newtype", "libnewtype") and got[1].newtypes[got[2]] == want[1]:
+            txt = ast.unparse(value)
+            fix = {"kind": "replace_token", "from": txt, "to": f"{want[1]}({txt})", "confidence": "high"}
+        elif want and want[0] == "result" and got and got[0] != "result":
+            txt = ast.unparse(value)
+            fix = {"kind": "replace_token", "from": txt, "to": f"{'Some' if want[1] == 'Option' else 'Ok'}({txt})", "confidence": "medium"}
+        elif got and got[0] == "result" and want and want[0] != "result":
+            fix = {"kind": "review", "hint": "unwrap it with ? (in a function returning Result), or match on Ok/Err"}
+        self.err("T010", f"{what} expects {type_name(want)}, got {type_name(got)}", value,
+                 context={"expected": type_name(want), "actual": type_name(got)}, fix=fix)
+
     def _declared_error(self) -> str | None:
         t = self.p.ann_type(self.mod, self.func.node.returns) if self.func else None
         return t[3] if t and t[0] == "result" and len(t) > 3 else None
@@ -1166,8 +1601,10 @@ class BodyChecker(ast.NodeVisitor):
             )
 
     def visit_Return(self, node: ast.Return) -> None:
-        if node.value is not None:
+        if node.value is not None and self.func is not None and not getattr(self, "_nested", 0):
             self._check_error_type(node.value, "returns")
+            want = self.p.ann_type(self.mod, self.func.node.returns)
+            self.type_error(want, node.value, f"the return value of '{self.func.name}'")
         self.generic_visit(node)
 
     def _bind(self, target: ast.expr, container: tuple | None) -> None:
@@ -1184,6 +1621,20 @@ class BodyChecker(ast.NodeVisitor):
             self.var_types[name] = t
         else:
             self.var_types.pop(name, None)
+
+    def visit_With(self, node: ast.With) -> None:
+        for item in node.items:
+            self.visit(item.context_expr)
+            if item.optional_vars is not None:
+                for target in ast.walk(item.optional_vars):
+                    if isinstance(target, ast.Name):
+                        self._set_type(target.id, self._entered(item.context_expr))
+        for stmt in node.body:
+            self.visit(stmt)
+
+    def _entered(self, e: ast.expr) -> tuple | None:
+        """What `with e as x` binds to x, when Jig can tell."""
+        return None
 
     def visit_For(self, node: ast.For) -> None:
         self.visit(node.iter)
@@ -1219,6 +1670,8 @@ class BodyChecker(ast.NodeVisitor):
         self.generic_visit(node)
         if isinstance(node.target, ast.Name):
             t = self.p.ann_type(self.mod, node.annotation)
+            if node.value is not None:
+                self.type_error(t, node.value, f"'{node.target.id}'")
             if t:
                 self.var_types[node.target.id] = t
 
@@ -1250,9 +1703,22 @@ class BodyChecker(ast.NodeVisitor):
         self.err("R001", f"unknown name '{node.id}'", node, context={"candidates": candidates}, fix=fix)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        if node.attr.startswith("__"):
+        via_super = isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "super"
+        if node.attr.startswith("__") and not via_super:
             self.err("F002", f"dunder attribute '{node.attr}' is not allowed", node)
         base = self.type_of(node.value)
+        if base == ("web_h",) and node.attr not in web.HTML_TAGS:
+            fix, cands = replace_fix(node.attr, web.HTML_TAGS)
+            self.err("R002", f"'{node.attr}' is not an HTML element", node, context={"candidates": cands}, fix=fix)
+        elif base and base[0] == "stdtype" and node.attr not in std.STD_TYPE_MEMBERS.get(base[2], {}):
+            members = std.STD_TYPE_MEMBERS.get(base[2], {})
+            fix, cands = replace_fix(node.attr, members)
+            self.err("R002", f"'{base[2]}' has no attribute '{node.attr}'; it has: {_listing(members)}", node,
+                     context={"candidates": cands}, fix=fix)
+        if base and base[0] in INSTANCES | {"class_type"} and base[2] in base[1].classinfo and not node.attr.startswith("__"):
+            self._check_member(node, base)
+            self.generic_visit(node)
+            return
         if base:
             kind = base[0]
             if kind == "record":
@@ -1285,7 +1751,7 @@ class BodyChecker(ast.NodeVisitor):
                         fix={"kind": "replace_token", "from": f"{ast.unparse(node.value)}.{node.attr}", "to": f"{prim}({ast.unparse(node.value)})", "confidence": "medium"},
                     )
             elif kind == "prim":
-                pytype = {"int": int, "float": float, "str": str}[base[1]]
+                pytype = std.PRIMITIVE_TYPES[base[1]]
                 if not node.attr.startswith("_") and not hasattr(pytype, node.attr):
                     fix, cands = replace_fix(node.attr, [a for a in dir(pytype) if not a.startswith("_")])
                     hint = " (looping over a dict gives its keys: use .values() or .items())" if base[1] == "str" else ""
@@ -1307,8 +1773,8 @@ class BodyChecker(ast.NodeVisitor):
                     fix, cands = replace_fix(node.attr, fields)
                     self.err("R002", f"'{base[2]}' (lib.{base[1].name}) has no field '{node.attr}'; its fields: {_listing(fields)}",
                              node, context={"candidates": cands}, fix=fix)
-            elif kind in ("list", "dict"):
-                pytype = list if kind == "list" else dict
+            elif kind in ("list", "set", "dict"):
+                pytype = {"list": list, "set": set, "dict": dict}[kind]
                 if not node.attr.startswith("_") and not hasattr(pytype, node.attr):
                     fix, cands = replace_fix(node.attr, [a for a in dir(pytype) if not a.startswith("_")])
                     self.err("R002", f"{pytype.__name__} has no attribute '{node.attr}'", node, context={"candidates": cands}, fix=fix)
@@ -1335,6 +1801,43 @@ class BodyChecker(ast.NodeVisitor):
                     self.err("R002", f"enum '{en}' has no variant '{node.attr}'; its variants: {_listing(variants)}", node, context={"enum": en, "known_variants": variants, "candidates": cands}, fix=fix)
         self.generic_visit(node)
 
+    def _check_member(self, node: ast.Attribute, base: tuple) -> None:
+        """`x.attr` on an instance, record, enum value or class: attr must be one of its members."""
+        kind, owner, name = base
+        ci = owner.classinfo[name]
+        found = self.p.member(owner, name, node.attr)
+        storing = isinstance(node.ctx, ast.Store)
+        if kind == "enum" and node.attr in ("name", "value"):
+            return
+        if found is None:
+            if self.p.class_of(owner, name)[1]:
+                return  # a base outside the project may provide it
+            if kind == "obj" and storing and self.func and self.func.cls and self.p.is_subclass(owner, name, ("obj", self.mod, self.func.cls)):
+                return
+            names = self.p.members(owner, name)
+            if kind == "record":
+                fields = owner.records[name]
+                fix, cands = replace_fix(node.attr, names)
+                self.err("R002", f"record '{name}' has no field '{node.attr}'; its fields: {_listing(fields)}"
+                         + (f"; methods: {_listing(sorted(set(names) - set(fields)))}" if set(names) - set(fields) else ""),
+                         node, context={"record": name, "known_fields": sorted(fields), "candidates": cands}, fix=fix)
+                return
+            fix, cands = replace_fix(node.attr, names)
+            what = "enum" if kind == "enum" or ci.kind == "enum" else "class"
+            if storing:
+                msg = f"'{name}' has no attribute '{node.attr}' to assign; it has: {_listing(names)}. Declare it in the class (`{node.attr}: <type>`) or set it in __init__"
+            else:
+                msg = f"{what} '{name}' has no attribute '{node.attr}'; it has: {_listing(names)}"
+            self.err("R002", msg, node, context={"candidates": cands, "members": names}, fix=fix)
+            return
+        if storing and kind in ("record", "enum") and owner.classinfo[name].kind in ("record", "enum") and name not in owner.py_records:
+            what = "record" if kind == "record" else "enum"
+            self.err("T011", f"{what} '{name}' is immutable; build a changed copy with replace({ast.unparse(node.value)}, {node.attr}=...)"
+                     if kind == "record" else f"enum '{name}' is immutable", node,
+                     fix={"kind": "review", "hint": "records never change: return replace(record, field=value) from std.record"})
+        elif storing and found[0] == "method" and found[2].kind != "property":
+            self.err("T011", f"'{name}.{node.attr}' is a method; it cannot be assigned", node)
+
     # -- calls
 
     def _check_py_call(self, node: ast.Call) -> None:
@@ -1357,9 +1860,59 @@ class BodyChecker(ast.NodeVisitor):
         if obj is not None and callable(obj) and (problem := call_problem(obj, node, bound)):
             self.err("T006", f"'{label}': {problem}", node)
 
+    def _check_element(self, node: ast.Call, tag: str) -> None:
+        """h.<tag>(...): known attributes, and every link, form and htmx call answered by a route."""
+        method_kw = next((kw.value for kw in node.keywords if kw.arg == "method"), None)
+        form_method = method_kw.value.upper() if isinstance(method_kw, ast.Constant) and isinstance(method_kw.value, str) else "GET"
+        for kw in node.keywords:
+            if kw.arg is None:
+                continue
+            if not web.html_attr_ok(tag, kw.arg):
+                allowed = sorted(a + "_" if keyword.iskeyword(a) else a  # class -> class_: what Python accepts
+                                 for a in web.GLOBAL_ATTRS | web.TAG_ATTRS.get(tag, frozenset()) | set(web.HTMX_ATTRS))
+                fix, cands = replace_fix(kw.arg, allowed)
+                hint = " (write class_ for class)" if kw.arg == "class" else ""
+                self.err("R002", f"<{tag}> has no attribute '{kw.arg}'{hint}", kw.value, context={"candidates": cands}, fix=fix)
+            elif kw.arg in web.URL_ATTRS:
+                method = web.URL_ATTRS[kw.arg] or (form_method if tag in ("form", "button", "input") else "GET")
+                self._check_link(kw.value, method)
+
+    def _check_link(self, value: ast.expr, method: str) -> None:
+        """A link to this app: a path some route answers. External, relative and computed links are not checked."""
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            path = value.value
+        elif isinstance(value, ast.JoinedStr):
+            path = "".join(v.value if isinstance(v, ast.Constant) else "x" for v in value.values)
+        else:
+            return
+        if not path.startswith("/") or path.startswith("//") or not self.p.routes:
+            return
+        path = path.split("#")[0].split("?")[0]
+        if not self.p.route_for(method, path):
+            known = sorted({f"{m} {pat}" for m, pat, _, _, _ in self.p.routes})
+            self.err("R004", f"no route answers {method} {path}; routes: {_listing(known)}", value,
+                     context={"routes": known})
+
     def visit_Call(self, node: ast.Call) -> None:
         self._check_py_call(node)
         f = node.func
+        if isinstance(f, ast.Attribute) and self.type_of(f.value) == ("web_h",) and f.attr in web.HTML_TAGS:
+            self._check_element(node, f.attr)
+        if isinstance(f, ast.Name) and f.id not in self.locals:
+            r = self.p.resolve(self.mod, f.id)
+            if r and r == ("std", "std.web", "redirect") and node.args:
+                self._check_link(node.args[0], "GET")
+        if isinstance(f, ast.Attribute) and f.attr == "run" and self.type_of(f.value) == ("stdtype", "std.web", "App"):
+            self.use("net", node, via="App.run")
+        if isinstance(f, ast.Attribute) and not f.attr.startswith("__"):
+            owner = self.type_of(f.value)
+            if owner and (owner[0] in INSTANCES or owner[0] == "class_type") and owner[2] in owner[1].classinfo:
+                found = self.p.member(owner[1], owner[2], f.attr)
+                if found and found[0] == "method" and found[2].kind != "property":
+                    callee = found[2]
+                    via_class = owner[0] == "class_type"
+                    skip = 1 if callee.kind == "classmethod" else 0 if callee.kind == "static" else (0 if via_class else 1)
+                    self._check_call(node, found[1], callee, skip)
         if isinstance(f, ast.Attribute) and (owner := self.type_of(f.value)) and owner[0] == "projmod":
             r = self.p.resolve(owner[1], f.attr)
             if r and r[0] == "function":
@@ -1383,8 +1936,23 @@ class BodyChecker(ast.NodeVisitor):
                 r = self.p.resolve(self.mod, name)
                 if r and r[0] == "record":
                     self._check_record_ctor(node, r[1], r[2])
+                    init = self.p.member(r[1], r[2], "__init__")
+                    if init and init[0] == "method":
+                        self._check_call(node, init[1], init[2], 1)
+                elif r and r[0] == "class" and r[2] in r[1].classinfo:
+                    init = self.p.member(r[1], r[2], "__init__")
+                    if init and init[0] == "method":
+                        self._check_call(node, init[1], init[2], 1)
+                    elif not self.p.class_of(r[1], r[2])[1] and (node.args or node.keywords) and not _unpacks(node):
+                        self.err("T006", f"'{name}' takes no arguments: it has no __init__", node)
                 elif r and r[0] == "newtype" and (len(node.args) != 1 or node.keywords):
                     self.err("T006", f"'{name}' takes exactly one positional value", node)
+                elif r and r[0] == "newtype":
+                    got = self.type_of(node.args[0])
+                    base = r[1].newtypes[r[2]]
+                    if got and (got[0] in NAMED or (got[0] == "prim" and self.p.mismatch(("prim", base), got))):
+                        self.err("T010", f"'{name}' wraps a {base}, got {type_name(got)}", node.args[0],
+                                 context={"expected": base, "actual": type_name(got)})
                 elif r and r[0] == "function":
                     self._check_call(node, r[1], r[1].functions[r[2]])
                 elif r and r[0] == "lib":
@@ -1392,12 +1960,27 @@ class BodyChecker(ast.NodeVisitor):
                         self.use(eff, node, via=name)
                     if r[2] in r[1].params:
                         self._check_arity(node, r[2], r[1].params[r[2]], set(r[1].params[r[2]]))
+                        types = r[1].param_types.get(r[2], [])
+                        if not _unpacks(node):
+                            for param, value in self._bound_args(node, r[1].params[r[2]]):
+                                text = types[r[1].params[r[2]].index(param)] if param in r[1].params[r[2]] else ""
+                                self.type_error(self.p.lib_type(r[1], text) if text else None, value,
+                                                f"'{name}' parameter '{param}'")
         self.generic_visit(node)
+
+    def _bound_args(self, node: ast.Call, params: list[str]) -> list[tuple[str, ast.expr]]:
+        """(parameter, value) for each argument of a call."""
+        pairs = list(zip(params, node.args))
+        pairs += [(kw.arg, kw.value) for kw in node.keywords if kw.arg in params]
+        return pairs
 
     def _check_record_ctor(self, node: ast.Call, owner: ModuleInfo, rec: str) -> None:
         fields = owner.records[rec]
         if _unpacks(node):
             return
+        for fname, value in self._bound_args(node, list(fields) if rec in owner.py_records else []) + [
+                (kw.arg, kw.value) for kw in node.keywords if kw.arg in fields and rec not in owner.py_records]:
+            self.type_error(self.p.ann_type(owner, fields[fname][0]), value, f"'{rec}' field '{fname}'")
         given: set[str] = set()
         if node.args and rec in owner.py_records:
             if len(node.args) > len(fields):
@@ -1434,28 +2017,35 @@ class BodyChecker(ast.NodeVisitor):
         if missing and not any(kw.arg is None for kw in node.keywords):
             self.err("T006", f"'{name}' is missing arguments: {', '.join(missing)}; the signature is {sig}", node)
 
-    def _check_call(self, node: ast.Call, owner: ModuleInfo, callee: FuncInfo) -> None:
+    def _check_call(self, node: ast.Call, owner: ModuleInfo, callee: FuncInfo, skip: int = 0) -> None:
+        """A call to a project function or method; skip: leading parameters the call fills itself (self, cls)."""
         for eff in sorted(self.p.effects_of(owner, callee)):
-            self.use(eff, node, via=callee.name)
+            self.use(eff, node, via=callee.qualname)
         if _unpacks(node):
             return  # f(*xs) / f(**kw): the argument count is only known at runtime
-        params = callee.params
+        label = callee.cls if callee.name == "__init__" else callee.qualname
+        args = callee.node.args
+        annotations = {a.arg: a.annotation for a in args.posonlyargs + args.args + args.kwonlyargs}
+        params = callee.params[skip:]
+        for param, value in self._bound_args(node, params):
+            self.type_error(self.p.ann_type(owner, annotations.get(param)), value, f"'{label}' parameter '{param}'")
+        sig = _signature(callee, skip).replace(f"{callee.cls}.__init__(", f"{callee.cls}(") if callee.cls else _signature(callee, skip)
         if len(node.args) > len(params) and not callee.varargs:
-            self.err("T006", f"'{callee.name}' takes {len(params)} arguments, got {len(node.args)}: the signature is {_signature(callee)}", node)
+            self.err("T006", f"'{label}' takes {len(params)} arguments, got {len(node.args)}: the signature is {sig}", node)
         given = set(params[: len(node.args)])
         for kw in node.keywords:
             if kw.arg not in params:
                 if not callee.varkw:
                     fix, cands = replace_fix(kw.arg, params)
-                    self.err("R002", f"'{callee.name}' has no parameter '{kw.arg}'", kw.value, context={"params": params, "candidates": cands}, fix=fix)
+                    self.err("R002", f"'{label}' has no parameter '{kw.arg}'", kw.value, context={"params": params, "candidates": cands}, fix=fix)
             elif kw.arg in given:
                 self.err("T006", f"parameter '{kw.arg}' is given twice", kw.value)
             else:
                 given.add(kw.arg)
-        missing = sorted(callee.required - given)
+        missing = sorted((callee.required - set(callee.params[:skip])) - given)
         if missing:
             self.err(
-                "T006", f"'{callee.name}' is missing arguments: {', '.join(missing)}; the signature is {_signature(callee)}",
+                "T006", f"'{label}' is missing arguments: {', '.join(missing)}; the signature is {sig}",
                 node, context={"missing": missing},
             )
 
@@ -1478,7 +2068,7 @@ class BodyChecker(ast.NodeVisitor):
         if "raw" in (a, b):
             nt, raw = (b, left) if a == "raw" else (a, right)
             txt = ast.unparse(raw)
-            self.err("T002", f"cannot mix {nt} with a plain number", raw, fix={"kind": "replace_token", "from": txt, "to": f"{nt}({txt})", "confidence": "high"})
+            self.err("T002", f"cannot mix {nt} with a plain value", raw, fix={"kind": "replace_token", "from": txt, "to": f"{nt}({txt})", "confidence": "high"})
         else:
             self.err("T002", f"cannot mix {a} and {b}", left)
 

@@ -42,25 +42,27 @@ class Manifest:
     functions: dict[str, set[str]] = field(default_factory=dict)
     returns: dict[str, str] = field(default_factory=dict)
     params: dict[str, list[str]] = field(default_factory=dict)
+    param_types: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def exports(self) -> set[str]:
         return set(self.newtypes) | set(self.enums) | set(self.records) | set(self.functions) | set(self.exceptions)
 
 
-def _param_names(text: str) -> list[str]:
-    """Names from `a: int, b: dict[str, int]`, splitting only on top-level commas."""
-    names, depth, current = [], 0, ""
+def _params(text: str) -> list[tuple[str, str]]:
+    """(name, type) from `a: int, b: dict[str, int]`, splitting only on top-level commas."""
+    params, depth, current = [], 0, ""
     for ch in text + ",":
         if ch == "," and depth == 0:
             if current.strip():
-                names.append(current.split(":")[0].strip())
+                name, _, typ = current.partition(":")
+                params.append((name.strip(), typ.split("=")[0].strip()))
             current = ""
             continue
         depth += ch in "[(" 
         depth -= ch in "])"
         current += ch
-    return names
+    return params
 
 
 def parse_manifest(path: Path) -> tuple[Manifest | None, list[Diagnostic]]:
@@ -108,7 +110,9 @@ def parse_manifest(path: Path) -> tuple[Manifest | None, list[Diagnostic]]:
             block = ("declare", m.group(1))
             manifest.functions[m.group(1)] = set()
             manifest.returns[m.group(1)] = (m.group(2) or "").strip()
-            manifest.params[m.group(1)] = _param_names(line[line.index("(") + 1 : line.rindex(")")])
+            params = _params(line[line.index("(") + 1 : line.rindex(")")])
+            manifest.params[m.group(1)] = [n for n, _ in params]
+            manifest.param_types[m.group(1)] = [t for _, t in params]
         else:
             block = None
             err("M002", "expected 'type', 'enum', 'record', 'exception', or 'declare'", lineno)

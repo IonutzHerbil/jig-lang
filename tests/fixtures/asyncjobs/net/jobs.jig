@@ -1,0 +1,51 @@
+module net.jobs
+
+import asyncio
+
+from std.result import Err, Ok, Result
+
+
+enum JobError:
+    EMPTY
+
+
+async def double(n: int) -> int:
+    """Twice n, after yielding to other tasks."""
+    examples:
+        double(4) -> 8
+    await asyncio.sleep(0)
+    return n * 2
+
+
+async def total(ns: list[int]) -> Result[int, JobError]:
+    """Sum of the doubled numbers, run concurrently."""
+    examples:
+        total([1, 2, 3]) -> Ok(12)
+        total([]) -> Err(JobError.EMPTY)
+    if not ns:
+        return Err(JobError.EMPTY)
+    results = await asyncio.gather(*(double(n) for n in ns))
+    return Ok(sum(results))
+
+
+class Worker:
+    """Runs jobs one after another."""
+
+    def __init__(self) -> None:
+        self.done: list[int] = []
+
+    async def run(self, n: int) -> int:
+        """Run one job."""
+        examples:
+            Worker().run(5) -> 10
+        value = await double(n)
+        self.done.append(value)
+        return value
+
+
+async def main() -> int:
+    """Entry point."""
+    w = Worker()
+    first = await w.run(1)
+    r = await total([first, 2])
+    return r.unwrap_or(0)

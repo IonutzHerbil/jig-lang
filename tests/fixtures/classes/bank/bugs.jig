@@ -1,0 +1,21 @@
+module bank.bugs
+
+from bank.accounts import Account, Kind, Money, Savings, Statement
+
+
+def mistakes(a: Account, s: Savings, st: Statement) -> Money:
+    """What a model gets wrong with classes."""
+    a.deposit("5")
+    a.deposit(Money(1), Money(2))
+    a.withdrawl(Money(1))
+    b = Account("x")
+    c = Account("x", Kind.CHECKING, 3)
+    a.ballance = Money(0)
+    a.colour = "red"
+    st.total = Money(0)
+    x = s.interest(2)
+    y = a.balance.lower()
+    z = Account.fee("savings")
+    k = Kind.SAVINGS.rate(1)
+    t = st.doubled() + 1
+    return a.is_empty

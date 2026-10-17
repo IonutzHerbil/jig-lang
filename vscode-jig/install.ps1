@@ -24,5 +24,5 @@ Write-Host "Success! Jig Language Extension installed successfully!" -Foreground
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Cyan
 Write-Host "1. Reload VS Code (Ctrl+Shift+P -> 'Developer: Reload Window')" -ForegroundColor White
-Write-Host "2. Open a .jig file to see syntax highlighting" -ForegroundColor White
+Write-Host "2. Open a .jig file: errors appear as you type (needs Jig: pip install jig-lang)" -ForegroundColor White
 Write-Host ""

@@ -12,7 +12,7 @@ from .checker import Project
 from .diagnostics import Diagnostic
 
 RUNNER = r'''
-import importlib, json, sys, traceback
+import asyncio, importlib, inspect, json, sys, traceback
 sys.path.insert(0, sys.argv[1])
 real_stdout = sys.stdout
 sys.stdout = sys.stderr
@@ -28,6 +28,8 @@ for case in cases:
             exec(line, ns)
         try:
             value = eval(case["call"], ns)
+            if inspect.iscoroutine(value):
+                value = asyncio.run(value)
         except rt.ContractViolation as cv:
             if cv.kind == "requires" and case["kind"] == "rejected":
                 r["status"] = "ok"
@@ -51,6 +53,8 @@ for case in cases:
             r["detail"] = "expected Err, got " + repr(value)
         else:
             expected = eval(case["expected"], ns)
+            if inspect.iscoroutine(expected):
+                expected = asyncio.run(expected)
             r["status"] = "ok" if value == expected else "fail"
             r["detail"] = "expected " + repr(expected) + ", got " + repr(value)
             r["actual"] = repr(value)
@@ -73,7 +77,8 @@ def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diag
     cases = []
     meta = []
     for mod in sorted(project.modules.values(), key=lambda m: m.name):
-        for fi in mod.functions.values():
+        methods = [fi for ci in mod.classinfo.values() for fi in ci.methods.values()]
+        for fi in [*mod.functions.values(), *methods]:
             for ex in fi.examples:
                 cases.append({"i": len(cases), "module": mod.name, "call": ex.call, "kind": ex.kind, "expected": ex.expected,
                               "imports": sorted(runtime_import(i) for i in fi.example_imports)})
@@ -127,7 +132,7 @@ def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diag
                 file=mod.file,
                 line=ex.line,
                 module=mod.name,
-                function=fi.name,
+                function=fi.qualname,
                 context=context,
                 fix=fix,
             )
