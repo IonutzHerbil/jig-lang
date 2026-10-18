@@ -72,19 +72,43 @@ def runtime_import(line: str) -> str:
     return f"from jig_runtime import {names}" if module.startswith("std.") else line
 
 
+def _reaches_world(project: Project, mod, fi, ex) -> set[str]:
+    """What an example would do to the real world: through its function, or any project function its call uses."""
+    import ast
+
+    real = set(project.real_effects(mod, fi))
+    for node in ast.walk(ex.call_ast):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            r = project.resolve(mod, node.func.id)
+            if r and r[0] == "function":
+                real |= project.real_effects(r[1], r[1].functions[r[2]])
+    return real
+
+
 def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diagnostic]]:
-    """Returns (total, passed, diagnostics)."""
+    """Returns (total, passed, diagnostics).
+
+    Examples run automatically (every check, every save in an editor, `jig do` before anything is applied), so one
+    that would reach the real world through the standard library (files, network, databases, environment) is not
+    run: W003 says so. Through a lib manifest, examples use the fake instead and run."""
     cases = []
     meta = []
+    skipped: list[Diagnostic] = []
     for mod in sorted(project.modules.values(), key=lambda m: m.name):
         methods = [fi for ci in mod.classinfo.values() for fi in ci.methods.values()]
         for fi in [*mod.functions.values(), *methods]:
             for ex in fi.examples:
+                if real := _reaches_world(project, mod, fi, ex):
+                    skipped.append(Diagnostic(
+                        "W003", f"example not run: `{ex.call}` would reach the real world ({', '.join(sorted(real))}); "
+                        "go through a lib manifest so examples use its fake", mod.file, ex.line, severity="warning",
+                        module=mod.name, function=fi.qualname))
+                    continue
                 cases.append({"i": len(cases), "module": mod.name, "call": ex.call, "kind": ex.kind, "expected": ex.expected,
                               "imports": sorted(runtime_import(i) for i in fi.example_imports)})
                 meta.append((mod, fi, ex))
     if not cases:
-        return 0, 0, []
+        return 0, 0, skipped
 
     script = build_dir / "_jig_examples.py"
     script.write_text(RUNNER, encoding="utf-8")
@@ -101,7 +125,7 @@ def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diag
     if proc.returncode != 0 or not proc.stdout.strip():
         first = next(iter(project.modules.values()))
         tail = proc.stderr.strip().splitlines()[-1:] or ["no output"]
-        return len(cases), 0, [Diagnostic("C005", f"example runner failed: {tail[0]}", first.file, 1, module=first.name)]
+        return len(cases), 0, [Diagnostic("C005", f"example runner failed: {tail[0]}", first.file, 1, module=first.name), *skipped]
 
     diags: list[Diagnostic] = []
     passed = 0
@@ -137,4 +161,4 @@ def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diag
                 fix=fix,
             )
         )
-    return len(cases), passed, diags
+    return len(cases), passed, diags + skipped

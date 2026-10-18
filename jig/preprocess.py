@@ -43,6 +43,18 @@ class Preprocessed:
     enums: dict[str, int] = field(default_factory=dict)
     clauses: dict[int, RawClauses] = field(default_factory=dict)
     comments: list[tuple[int, int, str]] = field(default_factory=list)
+    # line -> where `__jig_try__(` was inserted for each `?`, as columns of the rewritten line
+    try_inserts: dict[int, list[int]] = field(default_factory=dict)
+
+    def original_col(self, line: int, col: int) -> int:
+        """The column in the file for a column of the rewritten line (each `?` inserted `__jig_try__(` before
+        its expression)."""
+        for start in sorted(self.try_inserts.get(line, ()), reverse=True):
+            if col >= start + len(TRY_OPEN):
+                col -= len(TRY_OPEN)
+            elif col >= start:
+                col = start
+        return col
 
 
 def scan(line: str, state: str | None) -> tuple[list[bool], str | None, int]:
@@ -122,18 +134,27 @@ def _expr_start(line: str, pos: int, mask: list[bool]) -> int | None:
     return j if j < pos else None
 
 
-def _transform_try(line: str, state: str | None, lineno: int, file: str, diags: list[Diagnostic]) -> str:
+TRY_OPEN = "__jig_try__("
+
+
+def _transform_try(line: str, state: str | None, lineno: int, file: str, diags: list[Diagnostic],
+                   inserts: dict[int, list[int]]) -> str:
+    """Rewrite every `expr?` on the line as `__jig_try__(expr)`, recording where the text was inserted."""
+    starts: list[int] = []
     while True:
         mask, _, _ = scan(line, state)
         pos = next((i for i, c in enumerate(line) if c == "?" and not mask[i]), -1)
         if pos < 0:
+            if starts:
+                inserts[lineno] = starts
             return line
         start = _expr_start(line, pos, mask)
         if start is None:
             diags.append(Diagnostic("S001", "'?' must directly follow an expression", file, lineno, pos))
             line = line[:pos] + " " + line[pos + 1 :]
             continue
-        line = line[:start] + "__jig_try__(" + line[start:pos] + ")" + line[pos + 1 :]
+        starts = [s + len(TRY_OPEN) if s >= start else s for s in starts] + [start]  # earlier ones shift right
+        line = line[:start] + TRY_OPEN + line[start:pos] + ")" + line[pos + 1 :]
 
 
 def preprocess(text: str, file: str) -> tuple[Preprocessed, list[Diagnostic]]:
@@ -228,7 +249,7 @@ def preprocess(text: str, file: str) -> tuple[Preprocessed, list[Diagnostic]]:
         if m:
             def_stack.append((indent, idx))
             pre.clauses[idx] = RawClauses()
-            out.append(_transform_try(line, state, idx, file, diags))
+            out.append(_transform_try(line, state, idx, file, diags, pre.try_inserts))
             state = new_state
             continue
 
@@ -258,7 +279,7 @@ def preprocess(text: str, file: str) -> tuple[Preprocessed, list[Diagnostic]]:
         if code and def_stack and indent > def_stack[-1][0] and code[0] not in "\"'":
             pre.clauses[def_stack[-1][1]].body_started = True
 
-        out.append(_transform_try(line, state, idx, file, diags))
+        out.append(_transform_try(line, state, idx, file, diags, pre.try_inserts))
         state = new_state
 
     pre.source = "\n".join(out)

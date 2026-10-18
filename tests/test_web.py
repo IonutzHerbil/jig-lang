@@ -148,3 +148,33 @@ def test_new_web_project_checks_builds_and_serves_static(tmp_path):
     finally:
         proc.terminate()
         proc.wait(timeout=10)
+
+
+def test_handlers_run_one_at_a_time_and_async_handlers_are_awaited():
+    import threading
+
+    app = rt.App()
+    state = {"next": 1}
+
+    @app.post("/new")
+    def make() -> str:
+        n = state["next"]
+        time.sleep(0.0005)  # read, work, write: interleaving requests would hand out the same number
+        state["next"] = n + 1
+        return str(n)
+
+    @app.get("/later")
+    async def later() -> rt.Html:
+        return rt.h.p("awaited")
+
+    port = free_port()
+    threading.Thread(target=app.run, kwargs={"port": port}, daemon=True).start()
+    wait_for(lambda: fetch(f"http://127.0.0.1:{port}/later"), "the server")
+    got: list[str] = []
+    threads = [threading.Thread(target=lambda: got.append(fetch(f"http://127.0.0.1:{port}/new", {})[1])) for _ in range(100)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(map(int, got)) == list(range(1, 101))
+    assert fetch(f"http://127.0.0.1:{port}/later") == (200, "<p>awaited</p>")

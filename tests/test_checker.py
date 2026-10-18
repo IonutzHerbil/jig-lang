@@ -230,3 +230,30 @@ def test_columns_count_characters_after_non_ascii_text(tmp_path):
                                     encoding="utf-8")
     _, summary = check_project([str(tmp_path)], run_ex=False)
     assert summary["diagnostics"][0]["location"]["col"] == line.index("r.nmae")  # not the UTF-8 byte offset
+
+
+def test_columns_after_question_marks(tmp_path):
+    """Each `?` is rewritten to __jig_try__(...) before parsing; columns still point into the file as written."""
+    line = '    return Ok(find(find(o)?.order)?.titel + "é🚀" + find(o)?.nmae)'
+    (tmp_path / "m.jig").write_text(f'''module m
+
+from std.result import Err, Ok, Result
+
+
+record Order:
+    name: str
+    order: "Order"
+
+
+def find(o: Order) -> Result[Order, str]:
+    """."""
+    return Ok(o)
+
+
+def f(o: Order) -> Result[str, str]:
+    """."""
+{line}
+''', encoding="utf-8")
+    _, summary = check_project([str(tmp_path)], run_ex=False)
+    cols = sorted(d["location"]["col"] for d in summary["diagnostics"])
+    assert cols == [line.index("find(find"), line.index("find(o)?.nmae")]

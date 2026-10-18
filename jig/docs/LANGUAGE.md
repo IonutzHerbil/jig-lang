@@ -270,6 +270,10 @@ def toggle(todo_id: int) -> Html:
   over the page. In production the app is the `entry` in `.jig/config.json` (`todo.app.app`): `jig build`
   writes a program that serves it with `python <build>` on `$PORT` (8000), and `jig docker` packages it.
   `app.handle("GET", "/")` answers a request without a server, for tests.
+- **Concurrency**: requests arrive on several threads, but handlers run one at a time, so a handler can read and
+  change shared state (a store, a counter) without two requests interleaving; static files are served in
+  parallel. `App(concurrent=True)` runs handlers in parallel, and then the app guards its own state. `async def`
+  handlers work.
 
 ## Docker
 

@@ -1,0 +1,47 @@
+module t.m
+
+from std.option import Nothing, Option, Some
+from std.result import Err, Ok, Result
+
+type Money = Money(int)
+
+
+record Order:
+    name: str
+    total: Money
+    parent: "Order | None" = None
+
+
+def find(o: Order) -> Result[Order, str]:
+    """."""
+    return Ok(o)
+
+
+def maybe(o: Order) -> Option[Order]:
+    """."""
+    return Some(o)
+
+
+def good(o: Order) -> Result[str, str]:
+    """? gives the payload: its fields and methods are checked like any value."""
+    name = find(o)?.name.upper()
+    total = find(o)?.total + Money(1)
+    return Ok(name + str(int(total)))
+
+
+def bad(o: Order) -> Result[str, str]:
+    """."""
+    a = find(o)?.nmae  # expect: R002
+    b = find(o)?.total + 1  # expect: T002
+    c = find(o)?.name.uper()  # expect: R002
+    return Ok(a)
+
+
+def bad_option(o: Order) -> Option[str]:
+    """."""
+    return Some(maybe(o)?.titel)  # expect: R002
+
+
+def parents(o: Order) -> Result[str, str]:
+    """A field that may be None, reached through ?."""
+    return Ok(find(o)?.parent.name)  # expect: T013

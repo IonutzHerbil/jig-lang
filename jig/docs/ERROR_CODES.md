@@ -54,6 +54,7 @@ most also carry a `fix` an agent can apply directly.
 | E003 | Unknown effect, or `none` combined with other effects |
 | E004 | Contract or module constant is not pure |
 | W001 | Declares an effect it never uses (warning) |
+| W003 | An example that would reach the real world (files, network, databases, environment) through the standard library is not run, since examples run automatically; a lib manifest gives it a fake to run against |
 
 ## Contracts and examples
 

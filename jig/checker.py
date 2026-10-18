@@ -297,13 +297,18 @@ def _unpacks(node: ast.Call) -> bool:
 
 
 def _char_col(mod: ModuleInfo, line: int, col: int) -> int:
-    """The character column for an AST offset, which counts UTF-8 bytes: they differ after any non-ASCII text."""
+    """The column in the file, in characters, for an AST offset: those count UTF-8 bytes (they differ after any
+    non-ASCII text) of the rewritten line (where each `?` added `__jig_try__(`)."""
     if col <= 0:
         return col
     lines = mod.source_lines
-    if not 0 < line <= len(lines) or lines[line - 1].isascii():
-        return col
-    return len(lines[line - 1].encode("utf-8")[:col].decode("utf-8", errors="ignore"))
+    if 0 < line <= len(lines) and not lines[line - 1].isascii():
+        col = len(lines[line - 1].encode("utf-8")[:col].decode("utf-8", errors="ignore"))
+    return mod.pre.original_col(line, col)
+
+
+# Effects on the world outside the program: what automatic runs (probes) must never trigger.
+REAL_WORLD = frozenset({"fs", "net", "db", "env"})
 
 
 def _ref(e: ast.expr) -> str | None:
@@ -384,6 +389,7 @@ class Project:
         self._inferred: dict[tuple[str, str], set[str]] = {}
         self._constant_types: dict[tuple[str, str], tuple | None] = {}
         self._walked: dict[tuple[str, str], BodyChecker] = {}  # functions already walked, with their calls recorded
+        self._real: dict[tuple[str, str], set[str]] = {}  # real_effects, once known
         self._class_chains: dict[tuple[str, str], tuple[list[tuple[ModuleInfo, ClassInfo]], bool]] = {}
         self._ann_types: dict[tuple[str, int], tuple[tuple | None, ast.expr]] = {}
         self._effect_checks: list[tuple[ModuleInfo, FuncInfo, BodyChecker]] = []
@@ -755,6 +761,37 @@ class Project:
                         changed = True
         self._inferred.update(result)
         return self._inferred[key]
+
+    def real_effects(self, mod: ModuleInfo, fi: FuncInfo) -> set[str]:
+        """The effects fi has on the world outside the program (files, network, databases, the environment)
+        through the standard library itself, directly or through anything it calls. Libraries declared by a
+        manifest do not count: in examples and probes they are their fakes. What `jig probe` must never run."""
+        key = (mod.name, fi.qualname)
+        if key in self._real:
+            return self._real[key]
+        graph: dict[tuple[str, str], tuple[set[str], list[tuple[str, str]]]] = {}
+        pending = [(mod, fi)]
+        while pending:
+            m, f = pending.pop()
+            k = (m.name, f.qualname)
+            if k in graph or k in self._real:
+                continue
+            checker = self._walked.get(k) or self._body_checker(m, f, silent=True, collect_callees=True)[0]
+            calls = [(cm, cf) for cm, cf, *_ in (checker.callees or {}).values()]
+            graph[k] = (set(checker.real_world), [(cm.name, cf.qualname) for cm, cf in calls])
+            pending += calls
+        result = {k: set(direct) for k, (direct, _) in graph.items()}
+        changed = True
+        while changed:
+            changed = False
+            for k, (_, calls) in graph.items():
+                for c in calls:
+                    more = result.get(c, self._real.get(c, set()))
+                    if not more <= result[k]:
+                        result[k] |= more
+                        changed = True
+        self._real.update(result)
+        return self._real[key]
 
     def example_import(self, mod: ModuleInfo, name: str) -> str | None:
         """The import an example needs for a name declared exactly once in std, the project, or a manifest.
@@ -1422,6 +1459,7 @@ class BodyChecker(ast.NodeVisitor):
         # When set, the project functions this code calls or passes on are collected here instead of having their
         # effects looked up: how effects_of builds the call graph.
         self.callees: dict[tuple[str, str], tuple[ModuleInfo, FuncInfo, int, int, str]] | None = None
+        self.real_world: set[str] = set()  # effects this code has through the standard library itself
         self._async = [isinstance(func.node, ast.AsyncFunctionDef) if func else False]
         self._chain_seen: set[int] = set()
 
@@ -1442,8 +1480,11 @@ class BodyChecker(ast.NodeVisitor):
             fix=fix,
         )
 
-    def use(self, effect: str, node: ast.AST, via: str | None = None) -> None:
+    def use(self, effect: str, node: ast.AST, via: str | None = None, real: bool = False) -> None:
+        """This code has effect; real: through the standard library itself, on the world outside the program."""
         self.used_effects.setdefault(effect, []).append((node.lineno, node.col_offset, via))  # type: ignore[attr-defined]
+        if real and effect.split(".")[0] in REAL_WORLD:
+            self.real_world.add(effect)
 
     def type_of(self, e: ast.expr) -> tuple | None:
         """The type of an expression, or None when it cannot be known."""
@@ -1524,6 +1565,9 @@ class BodyChecker(ast.NodeVisitor):
         return None
 
     def _type_Call(self, e: ast.Call) -> tuple | None:
+        if isinstance(e.func, ast.Name) and e.func.id == "__jig_try__" and len(e.args) == 1:
+            unwrapped = self.type_of(e.args[0])  # x? is what x holds when it is Ok / Some
+            return unwrapped[2] if unwrapped and unwrapped[0] == "result" and len(unwrapped) > 2 else None
         if isinstance(e.func, ast.Attribute):
             return self._method_type(e)
         if isinstance(e.func, ast.Name) and e.func.id not in self.locals:
@@ -2140,7 +2184,7 @@ class BodyChecker(ast.NodeVisitor):
         if node.id in self.mod.global_names():
             r = self.p.resolve(self.mod, node.id)
             if r and r[0] == "py" and (eff := stdlib_effect(r[1], r[2])):
-                self.use(eff, node, via=f"{r[1]}.{r[2]}")
+                self.use(eff, node, via=f"{r[1]}.{r[2]}", real=True)
             if r and r[0] == "function" and id(node) not in self._callees:
                 # passed as a value: whoever receives it may call it
                 self._effects_through(r[1], r[1].functions[r[2]], node, node.id)
@@ -2260,7 +2304,7 @@ class BodyChecker(ast.NodeVisitor):
             elif kind == "pymod":
                 module = stdlib_module(base[1])
                 if module is not None and hasattr(module, node.attr) and (eff := stdlib_effect(base[1], node.attr)):
-                    self.use(eff, node, via=f"{base[1]}.{node.attr}")
+                    self.use(eff, node, via=f"{base[1]}.{node.attr}", real=True)
                 if module is not None and not hasattr(module, node.attr):
                     fix, cands = replace_fix(node.attr, public_names(module))
                     self.err("R002", f"module '{base[1]}' has no attribute '{node.attr}'", node, context={"candidates": cands}, fix=fix)
@@ -2547,10 +2591,11 @@ class BodyChecker(ast.NodeVisitor):
 
     def _effects_through(self, owner: ModuleInfo, callee: FuncInfo, node: ast.AST, via: str) -> None:
         """This code may run callee: its effects are this code's too."""
-        if self.callees is not None and callee.effects is None:
-            key = (owner.name, callee.qualname)  # resolved by effects_of, all at once; the first call site is kept
+        if self.callees is not None:
+            key = (owner.name, callee.qualname)  # the call graph, for effects_of and real_effects; first call site kept
             self.callees.setdefault(key, (owner, callee, getattr(node, "lineno", 1), getattr(node, "col_offset", 0), via))
-            return
+            if callee.effects is None:
+                return  # resolved by effects_of, all at once
         for eff in sorted(self.p.effects_of(owner, callee)):
             self.use(eff, node, via=via)
 

@@ -110,14 +110,21 @@ def _calls(project: Project, mod: ModuleInfo, fi: FuncInfo) -> list[str]:
 
 
 def run_probes(project: Project, build_dir: Path) -> list[tuple[str, str]]:
-    """(call, result) for every probe. Needs the project built into build_dir."""
-    cases = []
+    """(call, result) for every probe. Needs the project built into build_dir.
+
+    A function that reaches the real world (files, network, databases, the environment) through the standard
+    library, itself or through anything it calls, is never run: probes run automatically, also on code an AI just
+    wrote that nobody has approved. Libraries are their fakes, so calling them is safe."""
+    cases, skipped = [], []
     for mod in sorted(project.modules.values(), key=lambda m: m.name):
         for fi in mod.functions.values():
+            if real := project.real_effects(mod, fi):
+                skipped.append((f"{fi.name}(...)", f"not run: it reaches the real world ({', '.join(sorted(real))})"))
+                continue
             for call in _calls(project, mod, fi):
                 cases.append({"i": len(cases), "module": mod.name, "call": call})
     if not cases:
-        return []
+        return skipped
     env = {**os.environ, "PYTHONHASHSEED": "0"}
     try:
         proc = subprocess.run(
@@ -131,7 +138,7 @@ def run_probes(project: Project, build_dir: Path) -> list[tuple[str, str]]:
     for line in stdout.splitlines():
         r = json.loads(line)
         results[r["i"]] = r.get("result", f"did not finish within {TIMEOUT}s (possible infinite loop)")
-    return [(c["call"], results[c["i"]]) for c in cases if c["i"] in results]
+    return [(c["call"], results[c["i"]]) for c in cases if c["i"] in results] + skipped
 
 
 def render_probes(probes: list[tuple[str, str]]) -> str:

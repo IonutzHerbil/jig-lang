@@ -602,10 +602,18 @@ class App:
 
     __jig_app__ = True
 
-    def __init__(self, static: str = "static") -> None:
-        """static: the folder served at /static/ (relative to where the app runs)."""
+    def __init__(self, static: str = "static", concurrent: bool = False) -> None:
+        """static: the folder served at /static/ (relative to where the app runs).
+
+        Requests arrive on several threads, but handlers run one at a time, so a handler can read and change shared
+        state (a store, a counter) without two requests interleaving. concurrent=True runs them in parallel: then
+        the app must guard its shared state itself. Static files are served in parallel either way."""
+        import threading
+
         self.routes: list[tuple[str, str, Any, Callable[..., Any]]] = []
         self.statics: list[tuple[str, str]] = [("/static", static)]
+        self.concurrent = concurrent
+        self._one_at_a_time = threading.Lock()
 
     def _add(self, method: str, path: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def register(handler: Callable[..., Any]) -> Callable[..., Any]:
@@ -651,7 +659,10 @@ class App:
                 continue
             req.params = match.groupdict()
             try:
-                return self._respond(self._call(handler, req))
+                if self.concurrent:
+                    return self._respond(self._call(handler, req))
+                with self._one_at_a_time:
+                    return self._respond(self._call(handler, req))
             except _BadRequest as e:
                 return Response(status=400, body=_error_page(400, str(e)))
             except ContractViolation as e:
@@ -684,7 +695,12 @@ class App:
                     continue
                 raise _BadRequest(f"missing '{name}'")
             args[name] = _convert(source[name], ann_name, handler, name)
-        return handler(**args)
+        result = handler(**args)
+        if inspect.iscoroutine(result):  # an async handler: run it to its answer
+            import asyncio
+
+            result = asyncio.run(result)
+        return result
 
     @staticmethod
     def _respond(value: Any) -> Response:

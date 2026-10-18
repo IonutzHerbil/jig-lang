@@ -184,3 +184,40 @@ def farewell(name: str) -> str:
     assert [p.name for p in changed] == ["farewell.jig"]
     assert {p: p.read_text(encoding="utf-8") for p in root.rglob("*.jig") if p.is_file()} == before  # nothing applied yet
     assert "+def farewell(name: str) -> str:" in report(root, work, changed)
+
+
+def test_probes_and_examples_never_run_code_that_reaches_the_real_world(tmp_path):
+    """Probes and examples run automatically, also on AI-written code nobody approved: nothing that touches files may run."""
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "data.txt").write_text("important", encoding="utf-8")
+    (tmp_path / "p").mkdir()
+    (tmp_path / "p" / "m.jig").write_text(f'''module m
+
+import shutil
+
+
+def clean(folder: str) -> int:
+    """Removes a folder."""
+    examples:
+        clean("") -> 0
+    shutil.rmtree("{victim.as_posix()}" + folder)
+    return 0
+
+
+def tidy(folder: str) -> int:
+    """Through another function."""
+    return clean(folder)
+
+
+def pure(n: int) -> int:
+    """Safe."""
+    return n * 2
+''', encoding="utf-8")
+    checked = jig("check", "--pretty", str(tmp_path / "p")).stdout
+    assert "W003" in checked and (victim / "data.txt").is_file()  # examples run on every check: not this one
+    out = jig("probe", str(tmp_path / "p")).stdout
+    assert (victim / "data.txt").is_file()
+    assert "clean(...) -> not run: it reaches the real world (fs)" in out
+    assert "tidy(...) -> not run: it reaches the real world (fs)" in out
+    assert "pure(-1) -> -2" in out

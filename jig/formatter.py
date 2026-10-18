@@ -1,12 +1,12 @@
-"""Canonical formatter. No options: one input shape, one output shape.
+"""Canonical formatter. No options: one input shape, one output shape. It never changes what code means.
 
-v0 rules:
-- indentation uses spaces only (tabs become 4 spaces)
+Rules, applied to code only (text inside a string, including a multi-line one, is kept exactly as written):
+- indentation uses spaces (tabs become 4 spaces)
 - no trailing whitespace
 - at most 2 consecutive blank lines, none at the start or end of the file
 - exactly one newline at the end of the file
-- each contiguous block of top-level 'from ... import ...' lines is sorted,
-  and the names inside each import line are sorted
+- each run of consecutive one-line `from ... import a, b` statements is sorted, and so are the names in each;
+  an import written over several lines ends the run and is left as written
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import re
 
 from .preprocess import scan
 
-IMPORT_RE = re.compile(r"from\s+(\S+)\s+import\s+(.+)")
+IMPORT_RE = re.compile(r"from\s+(\S+)\s+import\s+([\w\s,]+)")
 
 
 def _sort_names(line: str) -> str:
@@ -27,46 +27,52 @@ def _sort_names(line: str) -> str:
 
 
 def format_source(text: str) -> str:
-    lines = text.replace("\r\n", "\n").split("\n")
-    out: list[str] = []
+    raw = text.replace("\r\n", "\n").split("\n")
+    lines: list[str] = []
+    is_code: list[bool] = []  # whether the line starts as code, not inside a multi-line string
     state: str | None = None
-    for line in lines:
+    for line in raw:
         starts_in_string = state is not None
         _, state, _ = scan(line, state)
-        line = line.rstrip()
+        if state is None:  # the line ends as code: trailing whitespace is not part of any string
+            line = line.rstrip()
         if not starts_in_string:
             body = line.lstrip(" \t")
-            lead = line[: len(line) - len(body)].replace("\t", "    ")
-            line = lead + body
-        out.append(line)
+            line = line[: len(line) - len(body)].replace("\t", "    ") + body
+        lines.append(line)
+        is_code.append(not starts_in_string)
 
-    collapsed: list[str] = []
+    kept: list[str] = []
+    kept_code: list[bool] = []
     blanks = 0
-    for line in out:
-        if line == "":
+    for line, code in zip(lines, is_code):
+        if code and line == "":
             blanks += 1
             if blanks > 2:
                 continue
         else:
             blanks = 0
-        collapsed.append(line)
-    while collapsed and collapsed[0] == "":
-        collapsed.pop(0)
-    while collapsed and collapsed[-1] == "":
-        collapsed.pop()
+        kept.append(line)
+        kept_code.append(code)
+    while kept and kept[0] == "" and kept_code[0]:
+        kept.pop(0)
+        kept_code.pop(0)
+    while kept and kept[-1] == "" and kept_code[-1]:
+        kept.pop()
+        kept_code.pop()
 
     i = 0
-    while i < len(collapsed):
-        if collapsed[i].startswith("from "):
+    while i < len(kept):
+        if kept_code[i] and IMPORT_RE.fullmatch(kept[i]):
             j = i
-            while j < len(collapsed) and collapsed[j].startswith("from "):
+            while j < len(kept) and kept_code[j] and IMPORT_RE.fullmatch(kept[j]):
                 j += 1
-            collapsed[i:j] = sorted(_sort_names(line) for line in collapsed[i:j])
+            kept[i:j] = sorted(_sort_names(line) for line in kept[i:j])
             i = j
         else:
             i += 1
 
-    return "\n".join(collapsed) + "\n"
+    return "\n".join(kept) + "\n"
 
 
 def first_difference(a: str, b: str) -> int:
