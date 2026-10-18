@@ -1,0 +1,53 @@
+module q.e
+
+from lib.mail import send
+from std.ctx import Ctx
+
+
+def notify(to: str) -> bool:
+    """Sends mail."""
+    return send(to, "hi")
+
+
+def pure_wrapper(to: str) -> bool:
+    """e1: declares none, effect comes through a lambda"""
+    effects: none
+    f = lambda: notify(to)  # expect: E002
+    return f()
+
+
+def pure_via_map(tos: list[str]) -> list[bool]:
+    """e2: effect through map()"""
+    effects: none
+    return list(map(notify, tos))  # expect: E002
+
+
+def pure_via_method(c: Ctx) -> int:
+    """e3: effect through a ctx stored in a local"""
+    effects: none
+    clock = c.clock
+    return clock.now()  # expect: E001
+
+
+def pure_print(x: int) -> int:
+    """e4: print inside a nested helper"""
+    effects: none
+
+    def helper() -> None:
+        print(x)  # expect: E001
+
+    helper()
+    return x
+
+
+def ensures_bad(x: int) -> int:
+    """c1: ensures referencing an unknown name"""
+    ensures: result > minimum  # expect: R001
+    return x
+
+
+def example_bad(x: int) -> int:
+    """c2: example calling with wrong arity"""
+    examples:
+        example_bad(1, 2) -> 3  # expect: T006
+    return x

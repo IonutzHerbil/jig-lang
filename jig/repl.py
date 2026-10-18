@@ -31,7 +31,7 @@ import types
 from pathlib import Path
 
 from .checker import BodyChecker, Project, type_name
-from .cli import discover
+from .files import source_files
 from .diagnostics import describe_fix
 from .preprocess import preprocess
 from .transpiler import _Transformer, build
@@ -50,7 +50,7 @@ class Session:
         self.entries: list[tuple[set[str], str]] = []  # (names it declares, source)
         self.file = str((root / ".jig" / "repl.jig").resolve())
         self.build_dir = Path(tempfile.mkdtemp(prefix="jig-repl-"))
-        self.project_files = discover([str(root)]) if any(root.rglob("*.jig")) else []
+        self.project_files = source_files(root)
         self.reset()
 
     def reset(self) -> None:
@@ -74,21 +74,18 @@ class Session:
     def check(self, extra: str) -> tuple[Project, list]:
         project = Project()
         project.load([*self.project_files, Path(self.file)], {self.file: self.source(extra)})
-        mod = project.modules.get("repl")
         errors = [d for d in project.sorted_diags() if d.severity == "error"
                   and not (d.module == "repl" and d.code in RELAXED)]
         return project, errors
 
     def render(self, errors: list) -> str:
         lines = []
-        session_text = self.source("").split("\n")
         for d in errors:
             where = "" if d.module == "repl" else f" ({d.module} line {d.line})"
             text = f"error {d.code}{where}: {d.message}"
             if d.fix:
                 text += f"\n    fix: {describe_fix(d.fix)}"
             lines.append(text)
-        del session_text
         return "\n".join(dict.fromkeys(lines))
 
     # ------------------------------------------------------------ running

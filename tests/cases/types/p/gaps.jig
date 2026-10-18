@@ -1,0 +1,89 @@
+module p.gaps
+
+from p.valid import Line, Money, Order, Status, total
+from std.result import Err, Ok, Result
+
+
+def g1(o: Order) -> int:
+    """1: field typo through an index"""
+    return o.lines[0].prcie  # expect: R002
+
+
+def g2(o: Order) -> str:
+    """2: wrong attribute after a method returning a record"""
+    return max(o.lines, key=lambda l: l.qty).nme  # expect: R002
+
+
+def g3(o: Order) -> Money:
+    """3: augmented assignment mixing newtype with int"""
+    t = total(o)
+    t += 5  # expect: T002
+    return t
+
+
+def g4(o: Order) -> Money:
+    """4: returning int where Money is declared, via a local"""
+    n = len(o.lines)
+    return n  # expect: T010
+
+
+def g5(o: Order) -> list[Line]:
+    """5: list of the wrong element type"""
+    return [l.name for l in o.lines]  # expect: T010
+
+
+def g6(r: Result[Money, str]) -> Money:
+    """6: Result payload used without unwrapping"""
+    return r + Money(1)  # expect: T010
+
+
+def g7(s: Status) -> str:
+    """7: non-exhaustive match without wildcard"""
+    match s:  # expect: T003
+        case Status.OPEN:
+            return "open"
+
+
+def g8(o: Order) -> int:
+    """8: calling a record field as a function"""
+    return o.lines()  # expect: T014
+
+
+def g9(o: Order) -> Money:
+    """9: wrong keyword to a record constructor via replace"""
+    from_lines = Line(name="a", price=Money(1), quantity=2)  # expect: R002
+    return from_lines.price
+
+
+def g10(o: Order) -> Money:
+    """10: tuple unpack of record into wrong arity"""
+    a, b = o.lines[0].name, o.lines[0].price, 3  # expect: T006
+    return b
+
+
+def g11(xs: list[Money]) -> Money:
+    """11: sum() of newtypes starts at int 0"""
+    return sum(xs)  # expect: T002
+
+
+def g12(o: Order) -> str:
+    """12: optional field used without a None check"""
+    return o.note.upper()  # expect: T013
+
+
+def g13(o: Order) -> Money:
+    """13: dict lookup value type"""
+    d = {l.name: l.price for l in o.lines}
+    return d["x"].lower()  # expect: R002
+
+
+def g14(o: Order) -> int:
+    """14: method typo on a string field"""
+    return o.lines[0].name.uper()  # expect: R002
+
+
+def g15(o: Order) -> Money:
+    """15: comparing Money with an int literal"""
+    if total(o) > 100:  # expect: T002
+        return Money(1)
+    return Money(0)

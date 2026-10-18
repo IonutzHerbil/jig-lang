@@ -42,7 +42,7 @@ def test_new_jig_project_checks_runs_and_passes_the_gate(tmp_path):
     new(tmp_path / "shop", python=False)
     ok, diags, examples = check(tmp_path / "shop")
     assert ok and examples["passed"] == 2, diags
-    assert jig("run", ".", "--entry", "shop.app.main", cwd=tmp_path / "shop").stdout.strip() == "'Hello, world!'"
+    assert jig("run", ".", "--entry", "shop.app.main", cwd=tmp_path / "shop").stdout.strip() == "Hello, world!"
     assert jig("gate", ".", cwd=tmp_path / "shop").returncode == 0
     settings = json.loads((tmp_path / "shop" / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert set(settings["hooks"]) == {"SessionStart", "PostToolUse", "Stop"}
@@ -131,7 +131,7 @@ def test_entry_point_launcher_and_dockerfile(tmp_path):
     assert "RUN jig gate ." in dockerfile and "--entry hello.app.main" in dockerfile and 'CMD ["python", "/app"]' in dockerfile
     assert (root / ".dockerignore").is_file()
 
-    assert jig("run", cwd=root).stdout.strip() == "'Hello, world!'"
+    assert jig("run", cwd=root).stdout.strip() == "Hello, world!"
     assert jig("build", ".", "-o", str(tmp_path / "out"), cwd=root).returncode == 0
     ran = subprocess.run([sys.executable, str(tmp_path / "out")], capture_output=True, text=True)
     assert ran.stdout.strip() == "Hello, world!", ran.stderr  # plain Python, no Jig

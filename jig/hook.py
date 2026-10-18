@@ -20,11 +20,11 @@ from pathlib import Path
 
 from .autoimport import fix_imports
 from .cli import check_project, feedback_for_model
+from .files import project_config, project_root, source_files
 from .fixer import fix_source
 
 MODULE_RE = re.compile(r"^module\s+([\w.]+)", re.M)
 IMPORT_RE = re.compile(r"^(?:from\s+([\w.]+)\s+import\s+\(?([\w ,]+)|import\s+([\w.]+))", re.M)
-SKIP = {".git", "node_modules", "build", "dist", ".venv", "venv", "__pycache__", ".jig", ".claude"}
 MAP_LIMIT = 9_000  # characters; Claude Code moves longer context into a file
 MAX_STOP_BLOCKS = 3
 
@@ -32,34 +32,8 @@ MAX_STOP_BLOCKS = 3
 # ---------------------------------------------------------------- project discovery
 
 
-def project_root(file: Path, cwd: Path) -> Path:
-    for d in file.parents:
-        if (d / "lib").is_dir() or (d / ".decisions").is_dir() or (d / ".jig").is_dir():
-            return d
-    return cwd if cwd in file.parents else file.parent
-
-
-def config(root: Path) -> dict:
-    try:
-        return json.loads((root / ".jig" / "config.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
 def checks_python(root: Path) -> bool:
-    return bool(config(root).get("python"))
-
-
-def source_files(root: Path, python: bool) -> list[Path]:
-    exts = ("*.jig", "*.py") if python else ("*.jig",)
-    out = []
-    for ext in exts:
-        for f in root.rglob(ext):
-            rel = f.relative_to(root).parts
-            if not f.is_file() or SKIP & set(rel[:-1]) or rel[0] in ("lib", "tests", "test") or f.name.startswith("test_"):
-                continue
-            out.append(f)
-    return sorted(out)
+    return bool(project_config(root).get("python"))
 
 
 def is_jig_project(root: Path) -> bool:

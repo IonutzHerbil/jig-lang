@@ -1,0 +1,113 @@
+module p.valid
+
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from std.option import Nothing, Option, Some
+from std.result import Err, Ok, Result
+
+type Money = Money(int)
+
+
+record Line:
+    name: str
+    price: Money
+    qty: int = 1
+
+
+record Order:
+    lines: list[Line]
+    note: str | None = None
+
+
+enum Status:
+    OPEN
+    PAID
+
+
+@dataclass
+class Box:
+    items: list[int] = field(default_factory=list)
+
+
+def total(o: Order) -> Money:
+    """Sum of line prices."""
+    examples:
+        total(Order(lines=[Line(name="a", price=Money(2), qty=3)])) -> Money(6)
+    t = Money(0)
+    for line in o.lines:
+        t = t + line.price * line.qty
+    return t
+
+
+def names(o: Order) -> list[str]:
+    """Line names, upper-cased, with a walrus and a nested helper."""
+    def clean(s: str) -> str:
+        return s.strip().upper()
+
+    out = [clean(n) for line in o.lines if (n := line.name)]
+    return sorted(out)
+
+
+def note_len(o: Order) -> int:
+    """Narrowing an optional field."""
+    if o.note is None:
+        return 0
+    return len(o.note.strip())
+
+
+def first(o: Order) -> Option[Line]:
+    """Maybe the first line."""
+    return Some(o.lines[0]) if o.lines else Nothing
+
+
+def describe(s: Status) -> str:
+    """Match with a capture and a guard."""
+    match s:
+        case Status.OPEN:
+            return "open"
+        case _:
+            return "paid"
+
+
+def counts(words: list[str]) -> dict[str, int]:
+    """Counter and defaultdict."""
+    c = Counter(words)
+    d: defaultdict[str, int] = defaultdict(int)
+    for w, n in c.most_common(3):
+        d[w] += n
+    return dict(d)
+
+
+def parse(text: str) -> Result[int, str]:
+    """try/except binding a name; tuple unpacking; lambda."""
+    try:
+        a, b = text.split(",")
+        key = lambda x: -x
+        return Ok(sorted([int(a), int(b)], key=key)[0])
+    except ValueError as e:
+        return Err(str(e))
+
+
+def fib(n: int) -> int:
+    """Recursion."""
+    examples:
+        fib(10) -> 55
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+
+def money_str(m: Money) -> str:
+    """Format a newtype."""
+    return f"{int(m) / 100:.2f}"
+
+
+def pairs(o: Order) -> dict[str, Money]:
+    """Dict comprehension over records, then items()."""
+    by_name = {line.name: line.price for line in o.lines}
+    return {k: v + Money(1) for k, v in by_name.items()}
+
+
+def boxes() -> int:
+    """A dataclass with a default factory."""
+    b = Box()
+    b.items.append(3)
+    return len(b.items)

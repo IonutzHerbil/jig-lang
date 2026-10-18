@@ -23,6 +23,8 @@ most also carry a `fix` an agent can apply directly.
 | R001 | Unknown name (fix suggests the import or nearest name; `jig fix` adds the import when the name is declared exactly once) |
 | R002 | Unknown record field, enum variant, newtype attribute, `Result`/`Option` method, standard-library module attribute, `Ctx` capability or method, or keyword parameter |
 | R003 | Unknown module, a standard-library module with effects (the message names the Jig alternative), or a name the module / standard library / `std` / `lib.*` manifest does not export |
+| R004 | A link, form action, htmx request or redirect to a path no route of the app answers |
+| R005 | A form missing a field its handler requires, or sending a misspelled one |
 
 ## Types
 
@@ -40,6 +42,8 @@ most also carry a `fix` an agent can apply directly.
 | T010 | A value of the wrong type: an argument, record field, newtype value, return value or annotated variable whose type can never be the one declared (an `Order` where a `Customer` is asked, `"10"` where `Money` is, a `Result` returned where a plain value is promised). A newtype may go where its base type is asked |
 | T011 | Assigning a field of a record (records are immutable: `replace(r, field=value)`), a variant of an enum, or a method |
 | T012 | Calling an async function without `await`: the coroutine never runs |
+| T013 | A value that may be None (`X \| None`, `dict.get(k)`) used where a value is required: attribute, call argument, arithmetic, iteration. Checks like `if x is not None:`, `if x:`, `if x is None: return` and `assert x` make it safe |
+| T014 | Calling something that is not a function: a list, a record, a number, ... |
 
 ## Effects
 

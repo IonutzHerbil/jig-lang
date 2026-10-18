@@ -118,7 +118,7 @@ def explain_code(code: str) -> str | None:
     for line in error_codes().splitlines():
         if line.startswith("## "):
             group = line[3:].strip()
-        cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+        cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
         if len(cells) >= 2 and cells[0].upper() == code.upper():
             return f"## {cells[0]}: {group}\n\n{cells[1]}\n\nEvery error code: `jig doc errors`."
     return None

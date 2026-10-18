@@ -1,0 +1,64 @@
+module r.m
+
+from std.option import Nothing, Option, Some
+from std.record import replace
+from std.result import Err, Ok, Result
+
+type Money = Money(int)
+
+
+record Item:
+    name: str
+    price: Money
+    tags: list[str] = []
+
+
+def find(xs: list[Item], name: str) -> Option[Item]:
+    """The item called name."""
+    for x in xs:
+        if x.name == name:
+            return Some(x)
+    return Nothing
+
+
+def price_of(xs: list[Item], name: str) -> Option[Money]:
+    """? on an Option passes Nothing up."""
+    examples:
+        price_of([Item(name="a", price=Money(3))], "a") -> Some(Money(3))
+        price_of([Item(name="a", price=Money(3))], "b") -> Nothing
+    return Some(find(xs, name)?.price)
+
+
+def scaled(m: Money, times: int = 2) -> Money:
+    """A contract over a defaulted parameter."""
+    requires: times > 0
+    ensures: result >= m
+    examples:
+        scaled(Money(5)) -> Money(10)
+        scaled(Money(5), 3) -> Money(15)
+        scaled(Money(5), 0) -> rejected
+    return m * times
+
+
+def money_rules() -> list[bool]:
+    """Newtypes at runtime: equal only to the same newtype, usable as dict keys."""
+    examples:
+        money_rules() -> [True, True, True]
+    d = {Money(1): "one"}
+    return [Money(1) == Money(1), d[Money(1)] == "one", sorted([Money(2), Money(1)])[0] == Money(1)]
+
+
+def renamed(i: Item) -> Item:
+    """replace keeps the other fields; records compare by value."""
+    examples:
+        renamed(Item(name="a", price=Money(1))) -> Item(name="b", price=Money(1))
+    return replace(i, name="b")
+
+
+async def fetch(n: int) -> Result[int, str]:
+    """Async with ?."""
+    examples:
+        fetch(2) -> Ok(4)
+        fetch(-1) -> Err("negative")
+    checked = (Ok(n) if n >= 0 else Err("negative"))?
+    return Ok(checked * 2)

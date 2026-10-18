@@ -1,0 +1,61 @@
+module k.c
+
+
+class Node:
+    """A tree node."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+        self.children: list["Node"] = []
+
+    def add(self, child: "Node") -> "Node":
+        """Append a child; returns self for chaining."""
+        self.children.append(child)
+        return self
+
+    def first(self) -> "Node":
+        """The first child."""
+        return self.children[0]
+
+
+class Leaf(Node):
+    """A node that cannot have children."""
+
+    def add(self, child: Node) -> Node:
+        """Leaves refuse children."""
+        raise ValueError("leaf")
+
+
+def k1(n: Node) -> int:
+    """1: typo after chaining through a string-annotated return"""
+    return n.add(Node(1)).vlaue  # expect: R002
+
+
+def k2(n: Node) -> int:
+    """2: typo on an element of a self-typed list"""
+    return n.children[0].vale  # expect: R002
+
+
+def k3(n: Node) -> int:
+    """3: typo after a method returning the class"""
+    return n.first().valeu  # expect: R002
+
+
+def k4() -> Node:
+    """4: wrong argument type to the constructor"""
+    return Node("1")  # expect: T010
+
+
+def k5(n: Node) -> int:
+    """5: attribute only a subclass has"""
+    return n.leafy  # expect: R002
+
+
+def k6(l: Leaf) -> int:
+    """6: inherited attribute: fine"""
+    return l.value
+
+
+def k7(n: Node) -> None:
+    """7: overriding with a different arity is allowed in Python; calling with too many is not"""
+    n.add(Node(1), Node(2))  # expect: T006

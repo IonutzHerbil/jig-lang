@@ -1,0 +1,25 @@
+module r.m
+
+from std.result import Err, Ok, Result
+
+
+def half(n: int) -> Result[int, str]:
+    """Half of an even number."""
+    return Ok(n // 2) if n % 2 == 0 else Err("odd")
+
+
+def total(ns: list[int]) -> Result[int, str]:
+    """Sum of halves; a nested helper uses ? on its own Result."""
+    examples:
+        total([2, 4]) -> Ok(3)
+        total([2, 3]) -> Ok(1)
+
+    def safe_half(n: int) -> Result[int, str]:
+        return Ok(half(n)?)
+
+    count = 0
+    for n in ns:
+        r = safe_half(n)
+        if r.is_ok():
+            count = count + r.value
+    return Ok(count)

@@ -15,10 +15,10 @@ import time
 from pathlib import Path
 
 from .checker import Project
-from .cli import check_project, feedback_for_model, project_config
+from .cli import check_project, feedback_for_model
+from .files import project_config, watched_files
 from .transpiler import build
 
-WATCHED = ("*.jig", "lib/*.manifest", "lib/*.py", ".decisions/*.decision")
 CHILD = "import sys; sys.path.insert(0, sys.argv[1]); import importlib; " \
         "getattr(importlib.import_module(sys.argv[2]), sys.argv[3]).run(port=int(sys.argv[4]))"
 FALLBACK = """import sys
@@ -51,13 +51,7 @@ def find_app(project: Project, entry: str | None) -> str | None:
 
 
 def snapshot(root: Path) -> dict[str, float]:
-    found = {}
-    for pattern in WATCHED:
-        for f in root.rglob(pattern) if pattern.startswith("*") else root.glob(pattern):
-            parts = set(f.relative_to(root).parts)
-            if f.is_file() and not parts & {".git", ".jig", ".claude", "build", "__pycache__", ".venv"}:
-                found[str(f)] = f.stat().st_mtime
-    return found
+    return {str(f): f.stat().st_mtime for f in watched_files(root)}
 
 
 class DevServer:
@@ -100,7 +94,7 @@ class DevServer:
                 build(Project(), self.tmp / "runtime")
                 self.start([str(fallback), str(self.tmp / "runtime"), str(self.port)])
             return False
-        target = find_app(project, project_config([str(self.root)]).get("entry"))
+        target = find_app(project, project_config(self.root).get("entry"))
         if target is None:
             print("no std.web App in this project: add `app = App()` (from std.web) and routes", flush=True)
             return False

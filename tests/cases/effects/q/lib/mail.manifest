@@ -1,0 +1,4 @@
+lib mail
+
+declare send(to: str, body: str) -> bool
+    effects: net

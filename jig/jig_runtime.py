@@ -231,7 +231,14 @@ def try_(value: Any) -> Any:
 
 
 def record(cls: type) -> type:
-    """Records are immutable and built with keyword arguments only."""
+    """Records are immutable and built with keyword arguments only. A list, dict or set default is copied for each
+    record (`tags: list[str] = []` means an empty list of its own, not one shared by every record)."""
+    import copy
+
+    for name in getattr(cls, "__annotations__", {}):
+        default = cls.__dict__.get(name, dataclasses.MISSING)
+        if isinstance(default, (list, dict, set)):
+            setattr(cls, name, dataclasses.field(default_factory=lambda value=default: copy.copy(value)))
     return dataclasses.dataclass(frozen=True, kw_only=True)(cls)
 
 

@@ -19,7 +19,8 @@ from pathlib import Path
 from .autoimport import fix_imports
 from .cli import check_project, edge_probes, feedback_for_model
 from .fixer import fix_source
-from .hook import SKIP, with_imports
+from .files import SKIP_DIRS, source_files, watched_files
+from .hook import with_imports
 from .llm import Gemini, Reply
 
 CARDS = Path(__file__).with_name("cards")
@@ -38,11 +39,8 @@ Do not include files you did not change. Prefer adding a new module over rewriti
 
 
 def project_files(root: Path) -> list[Path]:
-    return sorted(
-        f for pattern in ("*.jig", "lib/*.manifest", ".decisions/*.decision")
-        for f in (root.rglob(pattern) if pattern == "*.jig" else root.glob(pattern))
-        if not SKIP & set(f.relative_to(root).parts)
-    )
+    """What the model is shown: source, manifests and decisions (not the library adapters behind them)."""
+    return [f for f in watched_files(root) if f.suffix != ".py"]
 
 
 def context(root: Path) -> str:
@@ -68,7 +66,7 @@ def apply_reply(text: str, work: Path) -> list[Path]:
         target.write_text(fix_source(body)[0], encoding="utf-8")
         changed.append(target)
     if changed:
-        fix_imports([f for f in work.rglob("*.jig") if not SKIP & set(f.relative_to(work).parts)], only=set(changed))
+        fix_imports(source_files(work), only=set(changed))
     return changed
 
 
@@ -79,7 +77,7 @@ def run(request: str, root: Path, model: Gemini, rounds: int, log=print) -> tupl
         project_manual=(CARDS / "jig_short_project.md").read_text(encoding="utf-8"),
     )
     work = Path(tempfile.mkdtemp(prefix="jig-do-")) / root.name
-    shutil.copytree(root, work, ignore=shutil.ignore_patterns(*SKIP))
+    shutil.copytree(root, work, ignore=shutil.ignore_patterns(*SKIP_DIRS))
     turns = [f"Project files:\n\n{context(root)}\n\nRequest: {request}"]
     changed: set[Path] = set()
     reading, ok = "", False

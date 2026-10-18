@@ -1,0 +1,11 @@
+module d.m
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Cart:
+    items: list[str] = []  # expect: F013
+    seen: set[str] = set()  # expect: F013
+    tags: list[str] = field(default_factory=list)
+    count: int = 0

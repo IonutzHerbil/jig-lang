@@ -35,6 +35,21 @@ def _clause_entry(clause: Clause, params: list[str], with_result: bool) -> ast.T
     return ast.Tuple(elts=[ast.Constant(value=clause.text), lam], ctx=ast.Load())
 
 
+def _uses_try(node: ast.AST) -> bool:
+    """Whether a function body uses '?' itself (not only in functions nested inside it)."""
+    todo = list(ast.iter_child_nodes(node))
+    while todo:
+        n = todo.pop()
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "try_":
+            return True
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "__jig_try__":
+            return True
+        todo.extend(ast.iter_child_nodes(n))
+    return False
+
+
 def _contracts(fi) -> ast.Call:
     """The runtime wrapper: contracts, '?' propagation, declared effects (just '?' when fi is None)."""
     requires = ast.List(elts=[_clause_entry(c, fi.params, False) for c in fi.requires] if fi else [], ctx=ast.Load())
@@ -103,6 +118,8 @@ class _Transformer(ast.NodeTransformer):
         self.depth -= 1
         fi = self.mod.functions.get(node.name) if self.depth == 0 else None
         if fi is None or fi.node.lineno != node.lineno:
+            if self.depth > 0 and _uses_try(node):
+                node.decorator_list = [*node.decorator_list, _contracts(None)]
             return node
         node.decorator_list = [*node.decorator_list, _contracts(fi)]  # innermost: what @app.get(...) registers
         return node

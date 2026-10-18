@@ -1,0 +1,29 @@
+module w.app
+
+from std.web import App, Html, Request, h
+
+app = App()
+
+
+@app.post("/todos")
+def add(title: str, due: str = "") -> Html:
+    """Needs a title; the due date is optional."""
+    return h.li(title + due)
+
+
+@app.post("/notes/{note_id}")
+def edit(note_id: int, req: Request) -> Html:
+    """Reads the request itself: any field may be sent."""
+    return h.p(req.form.get("body", ""))
+
+
+@app.get("/")
+def home() -> Html:
+    """Forms, right and wrong."""
+    return h.div(
+        h.form(h.input(name="title"), h.input(name="due"), post="/todos"),
+        h.form(h.input(name="title"), post="/todos"),
+        h.form(h.input(name="titel"), post="/todos"),  # expect: R005 R005
+        h.form(h.input(name="body"), h.input(name="color"), post="/notes/3"),
+        h.form(h.input(name="title"), h.button("Add", name="go"), post="/todos"),
+    )

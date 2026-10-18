@@ -30,10 +30,10 @@ from . import std
 from .checker import INSTANCES, BodyChecker, FuncInfo, ModuleInfo, Project, public_names, type_name
 from .diagnostics import describe_fix
 from .examples import run_examples
+from .files import project_root, source_files
 from .interface import _function, render_interface
 from .transpiler import build
 
-SKIP = {".git", "node_modules", "build", "dist", ".venv", "venv", "__pycache__", ".jig", ".claude"}
 DEBOUNCE = 0.25  # seconds of quiet typing before a re-check
 
 # LSP enums
@@ -44,19 +44,6 @@ S_CLASS, S_METHOD, S_PROPERTY, S_FIELD, S_ENUM, S_FUNCTION, S_CONSTANT, S_STRUCT
 
 def uri_to_path(uri: str) -> str:
     return str(Path(url2pathname(unquote(urlparse(uri).path))).resolve())
-
-
-def project_root(file: Path, workspace: Path | None) -> Path:
-    for d in file.parents:
-        if (d / "lib").is_dir() or (d / ".decisions").is_dir() or (d / ".jig").is_dir():
-            return d
-        if workspace is not None and d == workspace:
-            return d
-    return file.parent
-
-
-def jig_files(root: Path) -> list[Path]:
-    return sorted(f for f in root.rglob("*.jig") if f.is_file() and not SKIP & set(f.relative_to(root).parts[:-1]))
 
 
 class Server:
@@ -193,7 +180,7 @@ class Server:
         if not path.endswith(".jig"):
             return
         root = project_root(Path(path), self.workspace)
-        files = jig_files(root)
+        files = source_files(root)
         if Path(path) not in files:
             files.append(Path(path))
         sources = {p: t for p, t in self.docs.items()}
@@ -289,16 +276,7 @@ class Server:
         fi = self.enclosing(project, mod, line)
         if fi is None:
             return BodyChecker(project, mod, None, set(), {}, silent=True)
-        checker, _ = project._body_checker(mod, fi, silent=True)
-        fresh = BodyChecker(project, mod, fi, checker.locals, {}, silent=True)
-        _, var_types = project._body_checker(mod, fi, silent=True)
-        fresh.var_types = dict(var_types)
-        body = fi.node.body[1:] if fi.docstring is not None else fi.node.body
-        for stmt in body:
-            if stmt.lineno > line:
-                break
-            fresh.visit(stmt)
-        return fresh
+        return project._body_checker(mod, fi, silent=True, until_line=line)[0]
 
     def named(self, project: Project, mod: ModuleInfo, checker: BodyChecker, expr: ast.expr) -> tuple[str, Any, Any] | None:
         """What an expression names: ("function"|"record"|..., owner, name-or-FuncInfo), or ("member", owner, found)."""

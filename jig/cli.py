@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
-import importlib
-import inspect
 import re
 import json
 import sys
@@ -13,6 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from . import files
 from .checker import Project
 from .diagnostics import render_for_model
 from .examples import run_examples
@@ -24,28 +22,13 @@ from .probes import render_probes, run_probes
 from .transpiler import build
 
 
-SKIP_DIRS = {".git", "node_modules", "build", "dist", ".venv", "venv", "__pycache__", "tests", "test", ".jig", ".claude"}
-
-
 def discover(paths: list[str], py: bool = False) -> list[Path]:
-    """The .jig files under paths, plus .py source files with py=True (test directories and test_*.py skipped)."""
-    files: list[Path] = []
-    for p in paths:
-        path = Path(p)
-        if path.is_dir():
-            found = sorted(f for f in path.rglob("*.jig")
-                           if f.is_file() and not SKIP_DIRS & set(f.relative_to(path).parts[:-1]))
-            if py:
-                found += sorted(f for f in path.rglob("*.py")
-                                if not SKIP_DIRS & set(f.relative_to(path).parts[:-1]) and not f.name.startswith("test_")
-                                and "lib" not in f.relative_to(path).parts[:1])
-            files.extend(found)
-        elif path.suffix in (".jig", ".py") and path.exists():
-            files.append(path)
-        else:
-            print(json.dumps({"error": f"not a .jig/.py file or directory: {p}"}), file=sys.stderr)
-            raise SystemExit(2)
-    return files
+    """The source files under paths; a path that is neither stops the command."""
+    try:
+        return files.discover(paths, py)
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        raise SystemExit(2) from None
 
 
 def check_project(paths: list[str], run_ex: bool = True, py: bool = False) -> tuple[Project, dict[str, Any]]:
@@ -119,19 +102,6 @@ def cmd_fix(args: argparse.Namespace) -> int:
     return 1 if (args.check and changed) else 0
 
 
-def project_config(paths: list[str]) -> dict[str, Any]:
-    """.jig/config.json of the project the paths are in: {"python": bool, "entry": "module.function", ...}."""
-    start = Path(paths[0] if paths else ".").resolve()
-    for d in [start, *start.parents]:
-        f = d / ".jig" / "config.json"
-        if f.is_file():
-            try:
-                return json.loads(f.read_text(encoding="utf-8"))
-            except ValueError:
-                return {}
-    return {}
-
-
 def cmd_build(args: argparse.Namespace) -> int:
     from .transpiler import entry_problem, write_launcher
 
@@ -139,7 +109,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     if not summary["ok"]:
         print(json.dumps(summary, indent=2))
         return 1
-    entry = args.entry or project_config(args.paths).get("entry")
+    entry = args.entry or files.project_config(Path(args.paths[0])).get("entry")
     if entry and (problem := entry_problem(project, entry)):
         print(json.dumps({"ok": False, "error": problem}, indent=2))
         return 2
@@ -155,7 +125,7 @@ def cmd_docker(args: argparse.Namespace) -> int:
     from .project import docker_files
 
     root = Path(args.dir).resolve()
-    config = project_config([str(root)])
+    config = files.project_config(root)
     for line in docker_files(root, bool(config.get("python")), config.get("entry"), force=args.force):
         print(line)
     name = re.sub(r"[^a-z0-9_.-]", "-", root.name.lower()).strip("-") or "app"
@@ -261,44 +231,32 @@ def cmd_do(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from .transpiler import entry_problem
+    """Check, build with the launcher, and run the program exactly as `python <build>` runs it in production."""
+    import os
+    import subprocess
+
+    from .transpiler import entry_problem, write_launcher
 
     project, summary = check_project(args.paths, run_ex=True)
     if not summary["ok"]:
-        print(json.dumps(summary, indent=2))
+        print(feedback_for_model(project), file=sys.stderr)
         return 1
-    entry = args.entry or project_config(args.paths).get("entry")
+    entry = args.entry or files.project_config(Path(args.paths[0])).get("entry")
     if not entry:
-        print(json.dumps({"error": "no entry point: pass --entry module.function, or set \"entry\" in .jig/config.json"}))
+        print("no entry point: pass --entry module.function, or set \"entry\" in .jig/config.json", file=sys.stderr)
         return 2
     if problem := entry_problem(project, entry):
-        print(json.dumps({"error": problem}))
+        print(problem, file=sys.stderr)
         return 2
-    module_name, _, func_name = entry.rpartition(".")
-    mod = project.modules[module_name]
-    fi = mod.functions.get(func_name)
-    if fi is None:  # a constant: a web app
-        with tempfile.TemporaryDirectory() as tmp:
-            build(project, Path(tmp))
-            sys.path.insert(0, tmp)
-            app = getattr(importlib.import_module(module_name), func_name)
-            if getattr(app, "__jig_app__", False):
-                app.run(port=args.port)
-                return 0
-            print(repr(app))
-            return 0
+    root = Path(args.paths[0]).resolve() if Path(args.paths[0]).is_dir() else None
     with tempfile.TemporaryDirectory() as tmp:
-        build(project, Path(tmp))
-        sys.path.insert(0, tmp)
-        runtime = importlib.import_module("jig_runtime")
-        func = getattr(importlib.import_module(module_name), func_name)
-        first = fi.node.args.args[0].annotation if fi.node.args.args else None
-        call_args = [runtime.real_ctx()] if getattr(first, "id", None) == "Ctx" else []
-        result = func(*call_args)
-        if inspect.iscoroutine(result):
-            result = asyncio.run(result)
-    print(repr(result))
-    return 0
+        build(project, Path(tmp), root=root)
+        write_launcher(project, Path(tmp), entry)
+        env = {**os.environ, "PORT": str(args.port)}
+        try:
+            return subprocess.run([sys.executable, tmp], env=env).returncode
+        except KeyboardInterrupt:
+            return 0
 
 
 def main(argv: list[str] | None = None) -> int:
