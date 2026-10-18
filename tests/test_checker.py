@@ -8,6 +8,7 @@ import sys
 import pytest
 
 from conftest import FIXTURES, REPO, check
+from jig.cli import check_project
 
 
 def codes(diags):
@@ -208,3 +209,24 @@ def test_async_functions_methods_and_unawaited_calls(tmp_path):
     result = subprocess.run([sys.executable, "-m", "jig", "run", str(FIXTURES / "asyncjobs"), "--entry", "net.jobs.main"],
                             capture_output=True, text=True)
     assert result.stdout.strip() == "8", result.stdout + result.stderr
+
+
+def test_effects_through_a_very_deep_call_chain(tmp_path):
+    """Effects flow through 1500 nested calls (deeper than Python's recursion limit) without a crash."""
+    lines = ["module deep", "", "", "def f0(x: int) -> int:", '    """The bottom: it logs."""', "    print(x)", "    return x"]
+    for i in range(1, 1500):
+        lines += ["", "", f"def f{i}(x: int) -> int:", f'    """Calls f{i - 1}."""', f"    return f{i - 1}(x)"]
+    lines += ["", "", "def top(x: int) -> int:", '    """Says it is pure, but logs 1500 calls down."""', "    effects: none",
+              "    return f1499(x)", ""]
+    (tmp_path / "deep.jig").write_text("\n".join(lines), encoding="utf-8")
+    ok, diags, _ = check(tmp_path, examples=False)
+    assert [c for c, _ in diags] == ["E002"], diags
+    assert "'f1499', which has effect 'log'" in diags[0][1]
+
+
+def test_columns_count_characters_after_non_ascii_text(tmp_path):
+    line = '    return "🚀 é" + r.nmae'
+    (tmp_path / "u.jig").write_text(f'module u\n\n\nrecord R:\n    name: str\n\n\ndef f(r: R) -> str:\n    """."""\n{line}\n',
+                                    encoding="utf-8")
+    _, summary = check_project([str(tmp_path)], run_ex=False)
+    assert summary["diagnostics"][0]["location"]["col"] == line.index("r.nmae")  # not the UTF-8 byte offset

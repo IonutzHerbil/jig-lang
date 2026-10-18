@@ -90,9 +90,18 @@ def test_hooks_map_check_remember_and_gate(copy_of):
     assert hook("post", edit).returncode == 0
     assert hook("stop", {"cwd": str(repo), "session_id": "s"}).stdout.strip() == ""
 
-    hook("post", edit)  # instincts: the mistake was recorded and is shown to the next session
+    # Instincts: the post and stop hooks both reported the mistake, but a session counts it once.
     learned = json.loads((repo / ".jig" / "instincts.json").read_text(encoding="utf-8"))
-    assert any("has no field 'currency'" in k for k in learned)
+    [(key, count)] = [(k, n) for k, n in learned.items() if "has no field 'currency'" in k]
+    assert count == 1
+    # A second session making the same mistake makes it a pattern, which the next session's map warns about.
+    with open(target, "a", encoding="utf-8") as f:
+        f.write("\n\ndef owed_again(invoice_id: str) -> str:\n    return store.get_invoice(invoice_id).currency\n")
+    hook("post", {**edit, "session_id": "s2"})
+    learned = json.loads((repo / ".jig" / "instincts.json").read_text(encoding="utf-8"))
+    assert learned[key] == 2
+    session = json.loads(hook("session", {"cwd": str(repo), "session_id": "s3"}).stdout)
+    assert "has no field 'currency'" in session["hookSpecificOutput"]["additionalContext"]
 
 
 def test_doc_renders_the_reference_for_a_terminal():
@@ -138,3 +147,40 @@ def test_entry_point_launcher_and_dockerfile(tmp_path):
 
     bad = jig("build", ".", "-o", str(tmp_path / "out2"), "--entry", "hello.greeting.greet", cwd=root)
     assert bad.returncode == 2 and "takes parameters (name)" in bad.stdout
+
+
+def test_do_repairs_until_the_checks_pass_and_touches_nothing_before(tmp_path):
+    """jig do with a scripted model: a buggy first answer, the checker's feedback, a fixed second answer."""
+    from jig.do import report, run
+    from jig.llm import Reply
+
+    new(tmp_path / "shop", python=False)
+    root = tmp_path / "shop"
+    before = {p: p.read_text(encoding="utf-8") for p in root.rglob("*.jig") if p.is_file()}
+    farewell = '''module shop.farewell
+
+from shop.greeting import greet
+
+
+def farewell(name: str) -> str:
+    """Says goodbye."""
+    examples:
+        farewell("Ada") -> "Bye, Ada!"
+    return "Bye, " + name + "!"
+'''
+    answers = [
+        "I add a farewell.\n```jig\n# file: shop/farewell.jig\n" + farewell.replace('"Bye, " + name', '"Bye, " + nme') + "```",
+        "Fixed the name.\n```jig\n# file: shop/farewell.jig\n" + farewell + "```",
+    ]
+    seen_prompts = []
+
+    def model(system, turns):
+        seen_prompts.append(turns[-1])
+        return Reply(text=answers[len(seen_prompts) - 1])
+
+    work, changed, reading, ok = run("add a farewell", root, model, rounds=3, log=lambda *_: None)
+    assert ok and reading == "I add a farewell."
+    assert "unknown name 'nme'" in seen_prompts[1] and "fix: replace 'nme' with 'name'" in seen_prompts[1]
+    assert [p.name for p in changed] == ["farewell.jig"]
+    assert {p: p.read_text(encoding="utf-8") for p in root.rglob("*.jig") if p.is_file()} == before  # nothing applied yet
+    assert "+def farewell(name: str) -> str:" in report(root, work, changed)

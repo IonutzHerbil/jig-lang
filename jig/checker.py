@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import dataclasses
 import difflib
 import keyword
 import sys
@@ -136,6 +137,11 @@ class ModuleInfo:
     classes: set[str] = field(default_factory=set)  # classes that are neither records nor enums
     classinfo: dict[str, ClassInfo] = field(default_factory=dict)  # every class's members, records and enums too
 
+    @functools.cached_property
+    def source_lines(self) -> list[str]:
+        """The lines the AST was parsed from (the preprocessed source: same lines as the file)."""
+        return self.pre.source.split("\n")
+
     def declared_names(self) -> set[str]:
         return set(self.functions) | set(self.records) | set(self.enums) | set(self.newtypes) | set(self.constants) | self.classes
 
@@ -245,21 +251,28 @@ def _is_docstring(stmt: ast.stmt) -> bool:
     return isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str)
 
 
+# What each kind of node binds, if anything: the names a block assigns, so they are its locals.
+_BINDS = {
+    ast.Name: lambda n: n.id if not isinstance(n.ctx, ast.Load) else None,
+    ast.FunctionDef: lambda n: n.name,
+    ast.AsyncFunctionDef: lambda n: n.name,
+    ast.ExceptHandler: lambda n: n.name,
+    ast.arg: lambda n: n.arg,
+    ast.MatchAs: lambda n: n.name,
+    ast.MatchStar: lambda n: n.name,
+    ast.MatchMapping: lambda n: n.rest,
+}
+
+
 def _bound_names(stmts: list[ast.stmt]) -> set[str]:
     names: set[str] = set()
-    for node in ast.walk(ast.Module(body=stmts, type_ignores=[])):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            names.add(node.id)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            names.add(node.name)
-        elif isinstance(node, ast.arg):
-            names.add(node.arg)
-        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
-            names.add(node.name)
-        elif isinstance(node, ast.MatchMapping) and node.rest:
-            names.add(node.rest)
+    todo: list[ast.AST] = list(stmts)
+    while todo:
+        node = todo.pop()
+        binds = _BINDS.get(type(node))
+        if binds is not None and (name := binds(node)):
+            names.add(name)
+        todo.extend(ast.iter_child_nodes(node))
     return names
 
 
@@ -281,6 +294,28 @@ def _listing(names: Iterable[str], limit: int = 25) -> str:
 
 def _unpacks(node: ast.Call) -> bool:
     return any(isinstance(a, ast.Starred) for a in node.args) or any(kw.arg is None for kw in node.keywords)
+
+
+def _char_col(mod: ModuleInfo, line: int, col: int) -> int:
+    """The character column for an AST offset, which counts UTF-8 bytes: they differ after any non-ASCII text."""
+    if col <= 0:
+        return col
+    lines = mod.source_lines
+    if not 0 < line <= len(lines) or lines[line - 1].isascii():
+        return col
+    return len(lines[line - 1].encode("utf-8")[:col].decode("utf-8", errors="ignore"))
+
+
+def _ref(e: ast.expr) -> str | None:
+    """`o.note` for a name or a chain of attributes on one; None for anything else (calls, subscripts)."""
+    parts = []
+    while isinstance(e, ast.Attribute):
+        parts.append(e.attr)
+        e = e.value
+    if not isinstance(e, ast.Name):
+        return None
+    parts.append(e.id)
+    return ".".join(reversed(parts))
 
 
 def _common(types: list[tuple | None]) -> tuple | None:
@@ -313,9 +348,31 @@ def _method_kind(node: ast.FunctionDef) -> str:
     return "method"
 
 
+# (file, text) -> what reading it gives; the AST is never changed after parsing, so checks can share it.
+_PARSED: dict[tuple[str, str], tuple[Preprocessed, list[Diagnostic], ast.Module | None, SyntaxError | None, int | None]] = {}
+_PARSED_LIMIT = 4000
+
+
+def _parse(path: str, text: str) -> tuple[Preprocessed, list[Diagnostic], ast.Module | None, SyntaxError | None, int | None]:
+    """(preprocessed, its diagnostics, tree, syntax error, first line that is not in canonical form)."""
+    key = (path, text)
+    if key not in _PARSED:
+        pre, pdiags = preprocess(text, path)
+        formatted = format_source(text)
+        unformatted = first_difference(text, formatted) if formatted != text and not path.endswith(".py") else None
+        try:
+            tree, error = ast.parse(pre.source, filename=path), None
+        except SyntaxError as e:
+            tree, error = None, e
+        if len(_PARSED) >= _PARSED_LIMIT:
+            _PARSED.pop(next(iter(_PARSED)))
+        _PARSED[key] = (pre, pdiags, tree, error, unformatted)
+    return _PARSED[key]
+
+
 def _project_roots(files: list[Path]) -> list[Path]:
     """The project roots of the files: where their lib/ and .decisions/ are."""
-    return sorted({project_root(Path(f)) for f in files})
+    return sorted({project_root(folder) for folder in {Path(f).parent for f in files}})
 
 
 # ---------------------------------------------------------------- project
@@ -326,6 +383,10 @@ class Project:
         self.modules: dict[str, ModuleInfo] = {}
         self._inferred: dict[tuple[str, str], set[str]] = {}
         self._constant_types: dict[tuple[str, str], tuple | None] = {}
+        self._walked: dict[tuple[str, str], BodyChecker] = {}  # functions already walked, with their calls recorded
+        self._class_chains: dict[tuple[str, str], tuple[list[tuple[ModuleInfo, ClassInfo]], bool]] = {}
+        self._ann_types: dict[tuple[str, int], tuple[tuple | None, ast.expr]] = {}
+        self._effect_checks: list[tuple[ModuleInfo, FuncInfo, BodyChecker]] = []
         self.routes: list[tuple[str, str, Any, ModuleInfo, FuncInfo]] = []  # (method, pattern, regex, module, handler)
         self.manifests: dict[str, Manifest] = {}
         self.decisions: dict[str, Decision] = {}
@@ -345,14 +406,16 @@ class Project:
         severity: str = "error",
         context: dict[str, Any] | None = None,
         fix: dict[str, Any] | None = None,
+        col_in_chars: bool = False,
     ) -> None:
+        """Record a diagnostic. col is an AST offset (UTF-8 bytes into the line) unless col_in_chars."""
         self.diags.append(
             Diagnostic(
                 code=code,
                 message=message,
                 file=mod.file,
                 line=line,
-                col=col,
+                col=col if col_in_chars else _char_col(mod, line, col),
                 severity=severity,
                 module=mod.name,
                 function=function,
@@ -370,9 +433,10 @@ class Project:
 
     # -- loading
 
-    def load(self, files: Iterable[Path], sources: dict[str, str] | None = None) -> None:
-        """Load and check files; sources overrides what is on disk (an editor's unsaved buffers), keyed by
-        resolved path."""
+    def load(self, files: Iterable[Path], sources: dict[str, str] | None = None,
+             check_only: set[str] | None = None) -> None:
+        """Load and check files. sources overrides what is on disk (an editor's unsaved buffers), keyed by resolved
+        path; with check_only, every file is read (so names resolve) but only those resolved paths are checked."""
         files = list(files)
         sources = sources or {}
         for root in _project_roots(files):
@@ -383,34 +447,24 @@ class Project:
             self.diags += mdiags + ddiags
 
         for path in files:
-            key = str(Path(path).resolve())
+            key = str(Path(path).resolve()) if sources else ""
             text = sources[key] if key in sources else Path(path).read_text(encoding="utf-8")
-            pre, pdiags = preprocess(text, str(path))
+            pre, pdiags, tree, error, unformatted = _parse(str(path), text)
             name = pre.module or module_name_for(Path(path))
-            mod = ModuleInfo(name=name, file=str(path), text=text, pre=pre)
-            for d in pdiags:
-                d.module = name
-            self.diags.extend(pdiags)
-
-            formatted = format_source(text)
-            if formatted != text and not str(path).endswith(".py"):
-                self.diag(
-                    "D001",
-                    "file is not in canonical form",
-                    mod,
-                    first_difference(text, formatted),
-                    fix={"kind": "format", "hint": "run `jig fmt`", "confidence": "high"},
-                )
-            try:
-                mod.tree = ast.parse(pre.source, filename=str(path))
-            except SyntaxError as e:
+            mod = ModuleInfo(name=name, file=str(path), text=text, pre=pre, tree=tree)
+            self.diags.extend(dataclasses.replace(d, module=name) for d in pdiags)
+            if unformatted is not None:
+                self.diag("D001", "file is not in canonical form", mod, unformatted,
+                          fix={"kind": "format", "hint": "run `jig fmt`", "confidence": "high"})
+            if error is not None:
                 src_lines = text.split("\n")
-                line = src_lines[e.lineno - 1] if e.lineno and e.lineno <= len(src_lines) else ""
+                line = src_lines[error.lineno - 1] if error.lineno and error.lineno <= len(src_lines) else ""
                 hint = ""
                 if kw := re.search(r"[(,]\s*(class|for|async|from|is|in|as)\s*=", line):
                     word = kw.group(1)
                     hint = f"; '{word}' is a Python keyword: write {word}_=... (it renders as the HTML attribute {word})"
-                self.diag("S001", f"syntax error: {e.msg}{hint}", mod, e.lineno or 1, max((e.offset or 1) - 1, 0))
+                self.diag("S001", f"syntax error: {error.msg}{hint}", mod, error.lineno or 1, max((error.offset or 1) - 1, 0),
+                          col_in_chars=True)  # SyntaxError counts characters, unlike AST offsets
 
             if name in self.modules:
                 self.diag("S007", f"module '{name}' is defined twice (also in {self.modules[name].file})", mod, pre.module_line)
@@ -427,8 +481,10 @@ class Project:
                 self._collect(mod)
         self.routes = self._collect_routes()
         for mod in self.modules.values():
-            if mod.tree is not None:
+            if mod.tree is not None and (check_only is None or str(Path(mod.file).resolve()) in check_only):
                 self._check_module(mod)
+        for mod, fi, checker in self._effect_checks:
+            self._check_declared_effects(mod, fi, checker)
 
     # -- resolution helpers
 
@@ -483,6 +539,14 @@ class Project:
     def ann_type(self, mod: ModuleInfo, ann: ast.expr | None) -> tuple | None:
         """The type an annotation names: names, list/set/dict/tuple, X | None, Result/Option with their payload, and
         forward references written as strings ("Node")."""
+        if ann is None:
+            return None
+        key = (mod.name, id(ann))
+        if key not in self._ann_types:
+            self._ann_types[key] = (self._ann_type(mod, ann), ann)  # the node is kept so its id stays its own
+        return self._ann_types[key][0]
+
+    def _ann_type(self, mod: ModuleInfo, ann: ast.expr | None) -> tuple | None:
         if isinstance(ann, ast.Name):
             return self.type_desc(mod, ann.id)
         if isinstance(ann, ast.Constant) and isinstance(ann.value, str):
@@ -658,14 +722,38 @@ class Project:
         return self._constant_types[key]
 
     def effects_of(self, mod: ModuleInfo, fi: FuncInfo) -> set[str]:
-        """Declared effects, or the ones its body uses when it declares none (inferred, recursion-safe)."""
+        """Declared effects, or else the ones the body uses: directly, and through every function it calls.
+
+        Each function whose effects are not known yet is walked once for its direct effects and the functions it
+        calls; effects then flow along the calls until nothing changes. An explicit worklist, not recursion, so a
+        call chain of any depth and calls in a cycle are fine, and only the functions reachable from fi are walked."""
         if fi.effects is not None:
             return fi.effects
         key = (mod.name, fi.qualname)
-        if key not in self._inferred:
-            self._inferred[key] = set()
-            checker, _ = self._body_checker(mod, fi, silent=True)
-            self._inferred[key] = set(checker.used_effects)
+        if key in self._inferred:
+            return self._inferred[key]
+        graph: dict[tuple[str, str], tuple[set[str], list[tuple[str, str]]]] = {}
+        pending = [(mod, fi)]
+        while pending:
+            m, f = pending.pop()
+            k = (m.name, f.qualname)
+            if k in graph or k in self._inferred:
+                continue
+            checker = self._walked.get(k) or self._body_checker(m, f, silent=True, collect_callees=True)[0]
+            calls = [(cm, cf) for cm, cf, *_ in (checker.callees or {}).values()]
+            graph[k] = (set(checker.used_effects), [(cm.name, cf.qualname) for cm, cf in calls])
+            pending += [(cm, cf) for cm, cf in calls if cf.effects is None]
+        result = {k: set(direct) for k, (direct, _) in graph.items()}
+        changed = True
+        while changed:
+            changed = False
+            for k, (_, calls) in graph.items():
+                for c in calls:
+                    more = result.get(c, self._inferred.get(c, set()))
+                    if not more <= result[k]:
+                        result[k] |= more
+                        changed = True
+        self._inferred.update(result)
         return self._inferred[key]
 
     def example_import(self, mod: ModuleInfo, name: str) -> str | None:
@@ -935,6 +1023,12 @@ class Project:
     def class_of(self, owner: ModuleInfo, name: str) -> tuple[list[tuple[ModuleInfo, ClassInfo]], bool]:
         """The class and its project base classes, nearest first; and whether some base is outside the project
         (an exception, a library class), so its attributes cannot all be known."""
+        key = (owner.name, name)
+        if key not in self._class_chains:
+            self._class_chains[key] = self._class_chain(owner, name)
+        return self._class_chains[key]
+
+    def _class_chain(self, owner: ModuleInfo, name: str) -> tuple[list[tuple[ModuleInfo, ClassInfo]], bool]:
         chain: list[tuple[ModuleInfo, ClassInfo]] = []
         open_ = False
         todo = [(owner, name)]
@@ -1088,11 +1182,11 @@ class Project:
         self.diag("R003", f"unknown module '{m}'; project modules and libraries: {_listing(known)}", mod, line, context={"candidates": cands}, fix=fix)
 
     def _check_module(self, mod: ModuleInfo) -> None:
-        for local, (m, line) in mod.pymods.items():
+        for m, line in mod.pymods.values():
             if stdlib_module(m) is None and m not in self.modules:
                 self._unknown_module(mod, m, line)
 
-        for local, (m, n, line) in mod.imports.items():
+        for m, n, line in mod.imports.values():
             if m not in self.modules and (pymod := stdlib_module(m)) is not None:
                 if not hasattr(pymod, n):
                     fix, cands = replace_fix(n, public_names(pymod))
@@ -1126,14 +1220,14 @@ class Project:
         for name in list(mod.records) + list(mod.enums) + list(mod.newtypes):
             if not PASCAL.match(name):
                 self._naming(mod, name, "types use PascalCase")
-        for rec, fields in mod.records.items():
+        for fields in mod.records.values():
             for fname in fields:
                 if not SNAKE.match(fname):
                     self._naming(mod, fname, "record fields use snake_case")
             checker = BodyChecker(self, mod, None, set(), {})
             for ann, _ in fields.values():
                 checker.visit(ann)
-        for en, variants in mod.enums.items():
+        for variants in mod.enums.values():
             for v in variants:
                 if not UPPER.match(v):
                     self._naming(mod, v, "enum variants use UPPER_CASE")
@@ -1166,6 +1260,30 @@ class Project:
                 checker.visit(stmt)
         for fi in mod.functions.values():
             self._check_function(mod, fi)
+
+    def _check_declared_effects(self, mod: ModuleInfo, fi: FuncInfo, checker: BodyChecker) -> None:
+        """Declaring effects is optional: undeclared ones are inferred. A declaration is an assertion, checked once
+        every function's effects are known."""
+        if fi.effects is None:
+            return
+        used = {eff: list(sites) for eff, sites in checker.used_effects.items()}
+        for owner, callee, line, col, via in (checker.callees or {}).values():
+            for eff in self.effects_of(owner, callee):
+                used.setdefault(eff, []).append((line, col, via))
+        for eff, sites in sorted(used.items()):
+            if any(std.covers(d, eff) for d in fi.effects):
+                continue
+            line, col, via = min(sites, key=lambda site: (site[0], site[1]))
+            fix = {"kind": "add_effect", "effect": eff, "confidence": "high"}
+            if via:
+                self.diag("E002", f"uses '{via}', which has effect '{eff}', but '{fi.qualname}' does not declare it",
+                          mod, line, col, function=fi.qualname, fix=fix)
+            else:
+                self.diag("E001", f"uses effect '{eff}' without declaring it", mod, line, col, function=fi.qualname, fix=fix)
+        for d in sorted(fi.effects):
+            if not any(std.covers(d, e) for e in used):
+                self.diag("W001", f"declares effect '{d}' but never uses it", mod, fi.node.lineno,
+                          function=fi.qualname, severity="warning")
 
     def _naming(self, mod: ModuleInfo, name: str, rule: str, line: int | None = None) -> None:
         if mod.file.endswith(".py"):
@@ -1202,8 +1320,9 @@ class Project:
         if node.returns is None and not (fi.cls and fi.name.startswith("__")):
             err("T004", f"'{fn}' has no return type, so its callers are checked less", node.lineno, severity="warning", fix={"kind": "insert_annotation", "hint": "-> <type>"})
 
-        checker, var_types = self._body_checker(mod, fi)
-        used = checker.used_effects
+        checker, var_types = self._body_checker(mod, fi, collect_callees=True)
+        self._walked[(mod.name, fi.qualname)] = checker  # effects_of reads its calls instead of walking again
+        self._effect_checks.append((mod, fi, checker))
         for arg in all_args:
             if var_types.get(arg.arg) == ("ctx",) and arg.arg not in checker.names_used:
                 err(
@@ -1211,21 +1330,6 @@ class Project:
                     "take a Ctx only for time, randomness or logging",
                     arg.lineno, arg.col_offset,
                 )
-        # Declaring effects is optional: undeclared ones are inferred. A declaration is an assertion, checked here.
-        if fi.effects is not None:
-            for eff, sites in sorted(used.items()):
-                if any(std.covers(d, eff) for d in fi.effects):
-                    continue
-                line, col, via = sites[0]
-                fix = {"kind": "add_effect", "effect": eff, "confidence": "high"}
-                if via:
-                    err("E002", f"uses '{via}', which has effect '{eff}', but '{fn}' does not declare it", line, col, fix=fix)
-                else:
-                    err("E001", f"uses effect '{eff}' without declaring it", line, col, fix=fix)
-            for d in sorted(fi.effects):
-                if not any(std.covers(d, e) for e in used):
-                    err("W001", f"declares effect '{d}' but never uses it", node.lineno, severity="warning")
-
         for clause in fi.requires:
             self._check_contract(mod, fi, clause, var_types, with_result=False)
             if _return_base(fi) == "Result":
@@ -1247,9 +1351,11 @@ class Project:
                 ec.visit(ex.expected_ast)
 
     def _body_checker(self, mod: ModuleInfo, fi: FuncInfo, silent: bool = False,
-                      until_line: int | None = None) -> tuple[BodyChecker, dict[str, tuple]]:
+                      until_line: int | None = None, collect_callees: bool = False) -> tuple[BodyChecker, dict[str, tuple]]:
         """Walk a function's signature and body (up to until_line, for an editor asking about a position). Returns
-        the checker, which then knows the effects used and the types of the locals, and the parameters' types."""
+        the checker, which then knows the effects used and the types of the locals, and the parameters' types.
+        With collect_callees the walk records the project functions called, instead of asking for their effects:
+        how effects_of builds the call graph."""
         node = fi.node
         a = node.args
         all_args = a.posonlyargs + a.args + a.kwonlyargs
@@ -1265,6 +1371,8 @@ class Project:
             var_types[all_args[0].arg] = ("class_type", mod, fi.cls) if fi.kind == "classmethod" else (me, mod, fi.cls)
         star = {x.arg for x in (a.vararg, a.kwarg) if x is not None}
         checker = BodyChecker(self, mod, fi, set(fi.params) | star | _bound_names(body), var_types, silent=silent)
+        if collect_callees:
+            checker.callees = {}
         for d in node.decorator_list:
             checker.visit(d)
         for arg in all_args:
@@ -1311,6 +1419,9 @@ class BodyChecker(ast.NodeVisitor):
         # The functions around the code being checked, innermost last: returns, `?` and error types follow it.
         self._scopes: list[ast.AST | None] = [func.node if func else None]
         self._callees: set[int] = set()  # ids of the Name nodes being called, not passed around
+        # When set, the project functions this code calls or passes on are collected here instead of having their
+        # effects looked up: how effects_of builds the call graph.
+        self.callees: dict[tuple[str, str], tuple[ModuleInfo, FuncInfo, int, int, str]] | None = None
         self._async = [isinstance(func.node, ast.AsyncFunctionDef) if func else False]
         self._chain_seen: set[int] = set()
 
@@ -1338,7 +1449,7 @@ class BodyChecker(ast.NodeVisitor):
         """The type of an expression, or None when it cannot be known."""
         rule = getattr(self, "_type_" + type(e).__name__, None)
         t = rule(e) if rule else None
-        if t and t[0] == "optional" and isinstance(e, (ast.Name, ast.Attribute)) and ast.unparse(e) in self.narrowed:
+        if t and t[0] == "optional" and self.narrowed and _ref(e) in self.narrowed:
             return t[1]
         return t
 
@@ -1644,9 +1755,10 @@ class BodyChecker(ast.NodeVisitor):
     # -- narrowing: what a condition proves about None
 
     def _facts(self, test: ast.expr) -> tuple[set[str], set[str]]:
-        """(known not None when test is true, known not None when it is false), as source texts."""
+        """(known not None when test is true, known not None when it is false), as name paths (`o.note`)."""
         if isinstance(test, (ast.Name, ast.Attribute)):
-            return {ast.unparse(test)}, set()
+            ref = _ref(test)
+            return ({ref} if ref else set()), set()
         if isinstance(test, ast.NamedExpr):
             return {test.target.id}, set()
         if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
@@ -1655,22 +1767,21 @@ class BodyChecker(ast.NodeVisitor):
         if isinstance(test, ast.Compare) and len(test.ops) == 1:
             left, op, right = test.left, test.ops[0], test.comparators[0]
             subject = left if isinstance(right, ast.Constant) and right.value is None else None
-            if subject is not None and isinstance(subject, (ast.Name, ast.Attribute)):
-                text = ast.unparse(subject)
+            if subject is not None and (text := _ref(subject)):
                 if isinstance(op, (ast.IsNot, ast.NotEq)):
                     return {text}, set()
                 if isinstance(op, (ast.Is, ast.Eq)):
                     return set(), {text}
-            if isinstance(left, (ast.Name, ast.Attribute)) and not (isinstance(right, ast.Constant) and right.value is None):
-                return ({ast.unparse(left)} if isinstance(op, (ast.Eq, ast.In, ast.Gt, ast.Lt, ast.GtE, ast.LtE)) else set()), set()
+            if subject is None and (text := _ref(left)) and isinstance(op, (ast.Eq, ast.In, ast.Gt, ast.Lt, ast.GtE, ast.LtE)):
+                return {text}, set()  # x == "a", x > 0: then x is not None
         if isinstance(test, ast.BoolOp):
             parts = [self._facts(v) for v in test.values]
             if isinstance(test.op, ast.And):
                 return set().union(*(y for y, _ in parts)), set()
             return set(), set().union(*(n for _, n in parts))
         if isinstance(test, ast.Call) and isinstance(test.func, ast.Name) and test.func.id == "isinstance" and test.args:
-            arg = test.args[0]
-            return ({ast.unparse(arg)} if isinstance(arg, (ast.Name, ast.Attribute)) else set()), set()
+            ref = _ref(test.args[0])
+            return ({ref} if ref else set()), set()
         return set(), set()
 
     @contextlib.contextmanager
@@ -1684,8 +1795,9 @@ class BodyChecker(ast.NodeVisitor):
 
     def _forget(self, target: ast.expr) -> None:
         """An assignment to target: what was known about it, and about its attributes, no longer holds."""
-        text = ast.unparse(target)
-        self.narrowed = {n for n in self.narrowed if n != text and not n.startswith(text + ".")}
+        text = _ref(target)
+        if text and self.narrowed:
+            self.narrowed = {n for n in self.narrowed if n != text and not n.startswith(text + ".")}
 
     # -- structure
 
@@ -2030,8 +2142,8 @@ class BodyChecker(ast.NodeVisitor):
             if r and r[0] == "py" and (eff := stdlib_effect(r[1], r[2])):
                 self.use(eff, node, via=f"{r[1]}.{r[2]}")
             if r and r[0] == "function" and id(node) not in self._callees:
-                for eff in sorted(self.p.effects_of(r[1], r[1].functions[r[2]])):
-                    self.use(eff, node, via=node.id)  # passed as a value: whoever receives it may call it
+                # passed as a value: whoever receives it may call it
+                self._effects_through(r[1], r[1].functions[r[2]], node, node.id)
             return
         if self.example_of is not None and (imp := self.p.example_import(self.mod, node.id)):
             self.example_of.example_imports.add(imp)
@@ -2433,10 +2545,18 @@ class BodyChecker(ast.NodeVisitor):
         if missing and not any(kw.arg is None for kw in node.keywords):
             self.err("T006", f"'{name}' is missing arguments: {', '.join(missing)}; the signature is {sig}", node)
 
+    def _effects_through(self, owner: ModuleInfo, callee: FuncInfo, node: ast.AST, via: str) -> None:
+        """This code may run callee: its effects are this code's too."""
+        if self.callees is not None and callee.effects is None:
+            key = (owner.name, callee.qualname)  # resolved by effects_of, all at once; the first call site is kept
+            self.callees.setdefault(key, (owner, callee, getattr(node, "lineno", 1), getattr(node, "col_offset", 0), via))
+            return
+        for eff in sorted(self.p.effects_of(owner, callee)):
+            self.use(eff, node, via=via)
+
     def _check_call(self, node: ast.Call, owner: ModuleInfo, callee: FuncInfo, skip: int = 0) -> None:
         """A call to a project function or method; skip: leading parameters the call fills itself (self, cls)."""
-        for eff in sorted(self.p.effects_of(owner, callee)):
-            self.use(eff, node, via=callee.qualname)
+        self._effects_through(owner, callee, node, callee.qualname)
         if _unpacks(node):
             return  # f(*xs) / f(**kw): the argument count is only known at runtime
         label = callee.cls if callee.name == "__init__" else callee.qualname

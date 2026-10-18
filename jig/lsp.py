@@ -42,6 +42,23 @@ K_FUNCTION, K_FIELD, K_VARIABLE, K_CLASS, K_MODULE, K_KEYWORD, K_ENUM_MEMBER, K_
 S_CLASS, S_METHOD, S_PROPERTY, S_FIELD, S_ENUM, S_FUNCTION, S_CONSTANT, S_STRUCT, S_ENUM_MEMBER = 5, 6, 7, 8, 10, 12, 14, 23, 22
 
 
+def to_utf16(text: str, col: int) -> int:
+    """A character column as the editor protocol counts it: UTF-16 code units."""
+    return col if text.isascii() else len(text[:col].encode("utf-16-le")) // 2
+
+
+def from_utf16(text: str, units: int) -> int:
+    """The character column for a position the editor sent in UTF-16 code units."""
+    if text.isascii():
+        return units
+    count = 0
+    for i, ch in enumerate(text):
+        if count >= units:
+            return i
+        count += 2 if ord(ch) > 0xFFFF else 1
+    return len(text)
+
+
 def uri_to_path(uri: str) -> str:
     return str(Path(url2pathname(unquote(urlparse(uri).path))).resolve())
 
@@ -53,6 +70,7 @@ class Server:
         self.docs: dict[str, str] = {}  # resolved path -> unsaved text
         self.uris: dict[str, str] = {}  # resolved path -> the URI the editor uses for it
         self.projects: dict[str, Project] = {}  # project root -> last check
+        self.parsed: dict[str, Project] = {}  # file -> the last check in which that file parsed
         self.published: dict[str, set[str]] = {}  # project root -> files with diagnostics shown
         self.workspace: Path | None = None
         self.timers: dict[str, threading.Timer] = {}
@@ -183,10 +201,11 @@ class Server:
         files = source_files(root)
         if Path(path) not in files:
             files.append(Path(path))
-        sources = {p: t for p, t in self.docs.items()}
+        sources = dict(self.docs)
         project = Project()
+        only = None if examples else {str(Path(path).resolve())}  # typing: just this file; open and save: all
         try:
-            project.load(files, sources)
+            project.load(files, sources, check_only=only)
             if examples and not project.has_errors:
                 with tempfile.TemporaryDirectory() as tmp:
                     build(project, Path(tmp), fakes=True)
@@ -197,15 +216,22 @@ class Server:
             return
         with self.lock:
             self.projects[str(root)] = project
+            if (mod := self.module_of(project, path)) is not None and mod.tree is not None:
+                self.parsed[path] = project
         by_file: dict[str, list[dict]] = {}
         for d in project.sorted_diags():
             file = str(Path(d.file).resolve())
             by_file.setdefault(file, []).append(self.to_lsp(d, self.text(file)))
-        shown = self.published.get(str(root), set()) | {path}  # the edited file always gets an answer, even "none"
-        for file in shown | set(by_file):
+        shown = self.published.get(str(root), set())
+        if only is not None:  # only this file was checked: leave the others' diagnostics as they are
+            targets = {path}
+            self.published[str(root)] = (shown - {path}) | ({path} if by_file.get(path) else set())
+        else:
+            targets = shown | set(by_file) | {path}
+            self.published[str(root)] = set(by_file)
+        for file in targets:  # the edited file always gets an answer, even "none"
             uri = self.uris.get(file) or Path(file).as_uri()
             self.notify("textDocument/publishDiagnostics", {"uri": uri, "diagnostics": by_file.get(file, [])})
-        self.published[str(root)] = set(by_file)
 
     def text(self, path: str) -> str:
         if path in self.docs:
@@ -232,8 +258,9 @@ class Server:
         if not m or (col == 0 and d.code[0] in "SDCM"):
             col, end = len(src) - len(src.lstrip()), len(src)
         message = d.message + (f"\nfix: {describe_fix(d.fix)}" if d.fix else "")
+        start, stop = to_utf16(src, col), to_utf16(src, max(end, col + 1))
         return {
-            "range": {"start": {"line": line, "character": col}, "end": {"line": line, "character": max(end, col + 1)}},
+            "range": {"start": {"line": line, "character": start}, "end": {"line": line, "character": stop}},
             "severity": ERROR if d.severity == "error" else WARNING,
             "code": d.code,
             "source": "jig",
@@ -242,17 +269,43 @@ class Server:
 
     # ------------------------------------------------------------ understanding a position
 
-    def where(self, params: dict) -> tuple[Project, ModuleInfo, int, int, str] | None:
+    @staticmethod
+    def module_of(project: Project, path: str) -> ModuleInfo | None:
+        return next((m for m in project.modules.values() if str(Path(m.file).resolve()) == path), None)
+
+    def where(self, params: dict, completing: bool = False) -> tuple[Project, ModuleInfo, int, int, str] | None:
+        """The project, module, line, column and line text at a request's position. While the file does not parse
+        (mid-edit, most of the time), completion analyses the buffer with the unfinished `name.` taken out, and
+        everything else uses the last version of the file that parsed."""
         path = uri_to_path(params["textDocument"]["uri"])
-        _, project = self.project_for(path)
-        mod = next((m for m in project.modules.values() if str(Path(m.file).resolve()) == path), None)
-        if mod is None:
-            return None
+        root, project = self.project_for(path)
         pos = params["position"]
         lines = self.text(path).split("\n")
         if pos["line"] >= len(lines):
             return None
-        return project, mod, pos["line"] + 1, pos["character"], lines[pos["line"]]
+        src = lines[pos["line"]]
+        mod = self.module_of(project, path)
+        if mod is not None and mod.tree is None:
+            col = from_utf16(src, pos["character"])
+            repaired = self.repaired(root, path, lines, pos["line"], col) if completing else None
+            project = repaired or self.parsed.get(path, project)
+            mod = self.module_of(project, path)
+        if mod is None or mod.tree is None:
+            return None
+        return project, mod, pos["line"] + 1, from_utf16(src, pos["character"]), src
+
+    def repaired(self, root: Path, path: str, lines: list[str], line: int, col: int) -> Project | None:
+        """The project checked with the cursor line's unfinished member access (`a.` or `a.dep`) removed."""
+        before = lines[line][:col]
+        m = re.search(r"\.\w*$", before)
+        if not m:
+            return None
+        fixed = list(lines)
+        fixed[line] = before[: m.start()] + lines[line][col:]
+        project = Project()
+        project.load(source_files(root) or [Path(path)], {**self.docs, path: "\n".join(fixed)}, check_only={path})
+        mod = self.module_of(project, path)
+        return project if mod is not None and mod.tree is not None else None
 
     @staticmethod
     def chain_at(src: str, col: int, through_word: bool = True) -> str:
@@ -412,7 +465,7 @@ class Server:
     # ------------------------------------------------------------ completion
 
     def on_textDocument_completion(self, params: dict) -> dict | None:
-        at = self.where(params)
+        at = self.where(params, completing=True)
         if at is None:
             return {"isIncomplete": False, "items": []}
         project, mod, line, col, src = at

@@ -107,14 +107,36 @@ def run(a: Account) -> Money:
         assert target["uri"].endswith("accounts.jig")
         assert target["range"]["start"]["line"] == at(accounts, "def deposit")["line"]
 
+        # Typing `a.` breaks the file: completion and hover must work after the re-check has seen the broken buffer.
         typing = good.replace("    left = a.deposit(Money(5))", "    left = a.")
         c.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": 4}, "contentChanges": [{"text": typing}]})
+        assert [d["code"] for d in c.diagnostics(uri)] == ["S001"]
         items = c.request("textDocument/completion", {**doc, "position": at(typing, "a.\n", 2)})["items"]
         labels = {i["label"] for i in items}
         assert {"deposit", "withdraw", "balance", "owner", "is_empty"} <= labels, labels
+        hover = c.request("textDocument/hover", {**doc, "position": at(typing, "a: Account")})
+        assert "a: Account" in hover["contents"]["value"]
 
         outline = c.request("textDocument/documentSymbol", {"textDocument": {"uri": (root / "bank" / "accounts.jig").as_uri()}})
         account = next(s for s in outline if s["name"] == "Account")
         assert {"deposit", "withdraw", "__init__"} <= {ch["name"] for ch in account["children"]}
+    finally:
+        c.close()
+
+
+def test_positions_are_utf16_like_the_protocol(tmp_path):
+    (tmp_path / ".jig").mkdir()
+    line = '    return "🚀🚀 é" + r.nmae'
+    text = f'module u\n\n\nrecord R:\n    name: str\n\n\ndef f(r: R) -> str:\n    """."""\n{line}\n'
+    path = tmp_path / "u.jig"
+    path.write_text(text, encoding="utf-8")
+    c = Client(tmp_path)
+    try:
+        c.notify("textDocument/didOpen", {"textDocument": {"uri": path.as_uri(), "languageId": "jig", "version": 1, "text": text}})
+        [d] = c.diagnostics(path.as_uri())
+        assert d["range"]["start"]["character"] == len(line[: line.index("nmae")].encode("utf-16-le")) // 2
+        hover = c.request("textDocument/hover", {"textDocument": {"uri": path.as_uri()},
+                                                 "position": {"line": 9, "character": d["range"]["start"]["character"] - 2}})
+        assert "r: R" in hover["contents"]["value"]  # the editor's UTF-16 position lands on `r`
     finally:
         c.close()

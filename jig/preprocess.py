@@ -53,6 +53,8 @@ def scan(line: str, state: str | None) -> tuple[list[bool], str | None, int]:
     """
     n = len(line)
     mask = [False] * n
+    if state is None and "'" not in line and '"' not in line and "#" not in line:
+        return mask, None, -1  # most lines: no string or comment to mark
     quote = state
     comment_col = -1
     i = 0

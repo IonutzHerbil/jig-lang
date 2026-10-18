@@ -76,19 +76,25 @@ def _state(root: Path, name: str) -> Path:
     return d / name
 
 
-def remember(root: Path, project) -> None:
-    """Count each kind of mistake agents make here; the stable part of the message is the key."""
+def remember(root: Path, project, state: dict, state_path: Path) -> None:
+    """Count the sessions in which agents made each kind of mistake here (the stable part of the message is the
+    key). A mistake counts once per session, however often that session's checks report it."""
     path = _state(root, "instincts.json")
     try:
         seen = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         seen = {}
+    counted = set(state.setdefault("remembered", []))
     for d in project.sorted_diags():
         if d.severity != "error" or d.code in ("D001", "S001"):
             continue
         message = re.sub(r"line \d+", "", d.message)
         key = f"{d.code} {message}"[:220]
-        seen[key] = seen.get(key, 0) + 1
+        if key not in counted:
+            counted.add(key)
+            seen[key] = seen.get(key, 0) + 1
+    state["remembered"] = sorted(counted)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
     path.write_text(json.dumps(seen, indent=1, sort_keys=True), encoding="utf-8")
 
 
@@ -97,7 +103,7 @@ def instincts(root: Path, top: int = 8) -> list[str]:
         seen = json.loads((root / ".jig" / "instincts.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    return [f"- {k} (seen {n} times)" for k, n in sorted(seen.items(), key=lambda kv: -kv[1]) if n >= 2][:top]
+    return [f"- {k} (in {n} sessions)" for k, n in sorted(seen.items(), key=lambda kv: -kv[1]) if n >= 2][:top]
 
 
 def _session(root: Path, event: dict) -> tuple[Path, dict]:
@@ -170,7 +176,7 @@ def post(event: dict) -> int:
         ex = summary["examples"]
         print(f"{note}jig check: ok, examples {ex['passed']}/{ex['total']} passed")
         return 0
-    remember(root, project)
+    remember(root, project, state, path)
     print(f"{note}jig check failed for {file.name}. Fix these and check again:\n\n{feedback_for_model(project)}", file=sys.stderr)
     return 2
 
@@ -191,7 +197,7 @@ def stop(event: dict) -> int:
         return 0
     state["blocks"] += 1
     path.write_text(json.dumps(state), encoding="utf-8")
-    remember(root, project)
+    remember(root, project, state, path)
     reason = (f"Jig checks still fail in files you changed ({state['blocks']}/{MAX_STOP_BLOCKS}). Fix them before "
               f"finishing:\n\n{feedback_for_model(project)}")
     print(json.dumps({"decision": "block", "reason": reason[:8000]}))
