@@ -1,3 +1,5 @@
+module billing.subscriptions
+
 """Starting, changing and ending subscriptions."""
 
 from dataclasses import replace
@@ -5,7 +7,7 @@ from dataclasses import replace
 from billing import store
 from billing.catalog import TIER_RANK, get_plan
 from billing.errors import InvalidChange
-from billing.models import Subscription, SubStatus, Tier
+from billing.models import SubStatus, Subscription, Tier
 
 TRIAL_DAYS = {Tier.PRO: 14, Tier.TEAM: 14}
 

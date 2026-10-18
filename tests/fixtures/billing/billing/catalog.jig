@@ -1,3 +1,5 @@
+module billing.catalog
+
 """The plans customers can subscribe to."""
 
 from billing.errors import NotFound

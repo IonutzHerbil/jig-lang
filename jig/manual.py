@@ -37,7 +37,6 @@ TOPICS = {
     "constants": ("Constants", "module-level values"),
     "style": ("One way to write it", "formatting and match instead of if-chains"),
     "forbidden": ("Not allowed", "the few Python features Jig rules out, and why"),
-    "python": ("Existing Python codebases", "checking plain .py files with --py"),
     "manifests": ("`lib/<name>.manifest`", "describing a third-party library so calls to it are checked"),
     "decisions": ("`.decisions/<id>.decision`", "project rules Jig enforces"),
     "commands": ("CLI", "every jig command"),
@@ -54,7 +53,7 @@ anyone relies on it.
 
 | Command | Does |
 | --- | --- |
-| `jig new myapp` | create a project (add `--py` for plain Python files) |
+| `jig new myapp` | create a project (add `--web` for a web app) |
 | `jig check --pretty .` | find every mistake and run the examples |
 | `jig run . --entry myapp.app.main` | run the program |
 | `jig gate .` | checks, then tests: before committing |

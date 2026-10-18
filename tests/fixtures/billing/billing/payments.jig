@@ -1,3 +1,5 @@
+module billing.payments
+
 """Collecting payment for invoices through the payment gateway."""
 
 from dataclasses import replace

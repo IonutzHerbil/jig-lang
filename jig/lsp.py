@@ -27,7 +27,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
 from . import std
-from .checker import INSTANCES, BodyChecker, FuncInfo, ModuleInfo, Project, public_names, type_name
+from .checker import INSTANCES, BodyChecker, FuncInfo, ModuleInfo, Project, type_name
 from .diagnostics import describe_fix
 from .examples import run_examples
 from .files import project_root, source_files
@@ -477,7 +477,7 @@ class Server:
                 base = checker.type_of(ast.parse(m.group(1), mode="eval").body)
             except SyntaxError:
                 base = None
-            return {"isIncomplete": False, "items": self.members(project, base)}
+            return {"isIncomplete": False, "items": self.members(project, base, checker)}
         items = [{"label": n, "kind": K_VARIABLE} for n in sorted(checker.var_types)]
         for n in sorted(mod.global_names()):
             r = project.resolve(mod, n)
@@ -488,40 +488,20 @@ class Server:
         items += [{"label": k, "kind": K_KEYWORD} for k in keyword.kwlist]
         return {"isIncomplete": False, "items": items}
 
-    def members(self, project: Project, base: tuple | None) -> list[dict]:
+    def members(self, project: Project, base: tuple | None, checker: BodyChecker) -> list[dict]:
+        """What can follow `value.`: a class's members with their signatures, or the names the checker accepts."""
         if not base:
             return []
-        kind = base[0]
-        if (kind in INSTANCES or kind == "class_type") and base[2] in base[1].classinfo:
+        if (base[0] in INSTANCES or base[0] == "class_type") and base[2] in base[1].classinfo:
             out = []
             for n in project.members(base[1], base[2]):
                 found = project.member(base[1], base[2], n)
                 is_method = found and found[0] == "method" and found[2].kind != "property"
-                out.append({"label": n, "kind": K_FUNCTION if is_method else K_FIELD,
-                            "detail": self.detail(project, found)})
+                out.append({"label": n, "kind": K_FUNCTION if is_method else K_FIELD, "detail": self.detail(project, found)})
             return out
-        if kind == "record":
-            return [{"label": f, "kind": K_FIELD} for f in base[1].records[base[2]]]
-        if kind == "enum_type":
-            return [{"label": v, "kind": K_ENUM_MEMBER} for v in base[1].enums[base[2]]]
-        if kind == "projmod":
-            return [{"label": n, "kind": K_FUNCTION} for n in sorted(base[1].declared_names())]
-        if kind == "pymod":
-            from .checker import stdlib_module
-
-            module = stdlib_module(base[1])
-            return [{"label": n, "kind": K_FUNCTION} for n in public_names(module)] if module else []
-        if kind == "result":
-            allowed = std.RESULT_ATTRS if base[1] == "Result" else std.OPTION_ATTRS
-            return [{"label": n, "kind": K_FUNCTION} for n in sorted(allowed)]
-        if kind == "ctx":
-            return [{"label": n, "kind": K_FIELD} for n in sorted(std.CTX_PARTS)]
-        if kind == "ctx_part":
-            return [{"label": n, "kind": K_FUNCTION} for n in sorted(std.CTX_METHODS[base[1]])]
-        if kind in ("prim", "list", "set", "dict"):
-            pytype = std.PRIMITIVE_TYPES.get(base[1]) if kind == "prim" else {"list": list, "set": set, "dict": dict}[kind]
-            return [{"label": n, "kind": K_FUNCTION} for n in dir(pytype) if not n.startswith("_")] if pytype else []
-        return []
+        rule = checker._attribute_rule(base)
+        kind = K_ENUM_MEMBER if base[0] == "enum_type" else K_FIELD if rule and rule[1] in ("field", "capability") else K_FUNCTION
+        return [{"label": n, "kind": kind} for n in (rule[2] if rule else [])]
 
     @staticmethod
     def detail(project: Project, found) -> str:

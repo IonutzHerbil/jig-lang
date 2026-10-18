@@ -1,3 +1,5 @@
+module billing.invoicing
+
 """Invoices for subscription periods."""
 
 from dataclasses import replace

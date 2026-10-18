@@ -3,9 +3,8 @@
 **Python plus guarantees, for code that AI writes.**
 
 A human says what they want, an AI writes the code, and Jig checks it before anyone relies on it. Correct,
-idiomatic Python is valid Jig: Jig adds no new language to learn, only checks the code must pass. It works on an
-existing Python codebase as it is, and its own `.jig` files add a few typed constructs for code written from
-scratch.
+idiomatic Python is valid Jig: there is no new language to learn, only checks the code must pass, plus a few
+typed constructs for data and errors. `.jig` files compile to plain Python with no dependencies.
 
 Named after the woodworking jig: a guide that makes every cut come out the same.
 
@@ -58,8 +57,8 @@ integration, and the language reference (`jig doc`). It has no dependencies beyo
 ## Start a project
 
 ```bash
-jig new myapp                 # a Jig project (.jig files)
-jig new myapp --py            # or a plain Python project that Jig checks
+jig new myapp                 # a Jig project
+jig new myapp --web           # or a web app
 cd myapp
 ```
 
@@ -73,7 +72,7 @@ jig check --pretty .                           # every check
 jig gate .                                     # checks, then tests: for CI and before committing
 ```
 
-To add Jig to a project you already have: `jig init --py` inside it.
+To set up the Claude Code integration in a folder you already have: `jig init` inside it.
 
 ## What Jig checks
 
@@ -94,23 +93,9 @@ shared state), and `threading`. Classes, `async`/`await` and `with` work as in P
 class's attributes are the ones it declares or sets on `self`, and calls to it and its methods are checked
 against their signatures.
 
-## Two ways to use it
+## The language
 
-**On an existing Python codebase.** Run `jig check --py <dir>`. Files need no changes: module names come from
-the package layout, and your formatting and naming are left alone. Describe third-party libraries in
-`lib/<name>.manifest` so calls into them are checked too:
-
-```
-lib gateway
-
-exception GatewayError
-exception CardDeclined(GatewayError)
-
-declare charge(customer_id: str, amount_cents: int, currency: str) -> str
-    effects: net
-```
-
-**In `.jig` files**, for code written from scratch, Python gains a few typed constructs:
+Python gains a few typed constructs:
 
 ```python
 module shop.billing
@@ -146,10 +131,10 @@ Full reference: [LANGUAGE.md](jig/docs/LANGUAGE.md), or `jig doc` offline. Every
 
 | Command | Does |
 | --- | --- |
-| `jig new <dir> [--py \| --web]` | start a project (plain Python, or a web app) with Claude Code and a Dockerfile set up |
-| `jig init [dir] [--py] [--user]` | add Jig and the Claude Code hooks to an existing project, or to every project |
-| `jig check <paths> [--py] [--pretty \| --for-model]` | every check, then runs examples |
-| `jig gate [paths] [--py]` | CI and pre-commit gate: every check, then the project's tests; changes nothing |
+| `jig new <dir> [--web]` | start a project (or a web app) with Claude Code and a Dockerfile set up |
+| `jig init [dir] [--user]` | add the Claude Code skill and hooks to a project, or to every project |
+| `jig check <paths> [--pretty \| --for-model]` | every check, then runs examples |
+| `jig gate [paths]` | CI and pre-commit gate: every check, then the project's tests against the compiled program; changes nothing |
 | `jig fix <paths>` | mechanical fixes: formatting, if/elif chains to `match`, unambiguous missing imports and module paths |
 | `jig do "<request>" [--project dir]` | an AI implements the request in a scratch copy, repairs until the checks pass, shows how it read the request, the diff and edge-case behavior, then asks before applying |
 | `jig probe <paths>` | what each function returns on edge inputs (`""`, `0`, `[]`, `-1`) |
@@ -213,7 +198,7 @@ same language server: point their LSP client at `jig lsp`.
 | After every edit | `jig fix` and `jig check` on the file and the modules it imports; errors go straight back to Claude and are remembered per project (`.jig/instincts.json`) |
 | Before finishing | Claude cannot finish while a file it changed fails the checks (at most 3 times per session) |
 
-In CI or a pre-commit hook, `jig gate --py .` runs every check and then the tests, and fails if either fails.
+In CI or a pre-commit hook, `jig gate .` runs every check and then the tests, and fails if either fails.
 
 ## Status
 

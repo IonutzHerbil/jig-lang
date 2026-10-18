@@ -7,8 +7,8 @@
     python -m jig.hook stop       Stop: Claude cannot finish while a file it changed fails the checks (at most
                                   3 times per session)
 
-A project is a Jig project when it has .jig files, lib/*.manifest or .decisions/. Plain .py files are checked
-too when .jig/config.json says {"python": true} (the installer's --py). Each hook reads its event on stdin.
+A project is a Jig project when it has .jig files, lib/*.manifest or .decisions/. Each hook reads its event on
+stdin.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from .autoimport import fix_imports
 from .cli import check_project, feedback_for_model
-from .files import project_config, project_root, source_files
+from .files import project_root, source_files
 from .fixer import fix_source
 
 MODULE_RE = re.compile(r"^module\s+([\w.]+)", re.M)
@@ -32,24 +32,18 @@ MAX_STOP_BLOCKS = 3
 # ---------------------------------------------------------------- project discovery
 
 
-def checks_python(root: Path) -> bool:
-    return bool(project_config(root).get("python"))
-
-
 def is_jig_project(root: Path) -> bool:
     return any(root.glob("lib/*.manifest")) or (root / ".decisions").is_dir() or (root / ".jig").is_dir() \
         or any(f.is_file() for f in root.rglob("*.jig"))
 
 
-def with_imports(file: Path, root: Path, python: bool = False) -> list[Path]:
+def with_imports(file: Path, root: Path) -> list[Path]:
     """The file plus every project module it imports, directly or not."""
-    from .checker import module_name_for
-
     modules: dict[str, Path] = {}
-    for f in source_files(root, python) + [file]:
+    for f in source_files(root) + [file]:
         text = f.read_text(encoding="utf-8", errors="replace")
         m = MODULE_RE.search(text) if f.suffix == ".jig" else None
-        modules.setdefault(m.group(1) if m else module_name_for(f), f)
+        modules.setdefault(m.group(1) if m else f.stem, f)
     todo, seen = [file.resolve()], set()
     while todo:
         f = todo.pop()
@@ -125,8 +119,7 @@ def session(event: dict) -> int:
     root = Path(event.get("cwd") or ".").resolve()
     if not is_jig_project(root):
         return 0
-    python = checks_python(root)
-    project, _ = check_project([str(f) for f in source_files(root, python)], run_ex=False)
+    project, _ = check_project([str(f) for f in source_files(root)], run_ex=False)
     parts = ["# Jig project map", "Every module's signatures and effects; check names here before using them.", ""]
     for mod in sorted(project.modules.values(), key=lambda m: m.name):
         if mod.tree is not None:
@@ -151,24 +144,20 @@ def post(event: dict) -> int:
     if not file.is_file():
         return 0
     root = project_root(file.resolve(), Path(event.get("cwd") or ".").resolve())
-    python = checks_python(root)
-    if file.suffix != ".jig" and not (python and file.suffix == ".py" and file.resolve() in
-                                      {f.resolve() for f in source_files(root, True)}):
+    if file.suffix != ".jig":
         return 0
-    applied: dict[str, int] = {}
-    if file.suffix == ".jig":
-        text = file.read_text(encoding="utf-8")
-        fixed, applied = fix_source(text)
-        if fixed != text:
-            file.write_text(fixed, encoding="utf-8")
-    imports = fix_imports(source_files(root, python), only={file})
+    text = file.read_text(encoding="utf-8")
+    fixed, applied = fix_source(text)
+    if fixed != text:
+        file.write_text(fixed, encoding="utf-8")
+    imports = fix_imports(source_files(root), only={file})
     applied.update({"imports": imports["imports"], "import paths": imports["paths"]})
     path, state = _session(root, event)
     rel = file.resolve().relative_to(root).as_posix()
     if rel not in state["changed"]:
         state["changed"].append(rel)
         path.write_text(json.dumps(state), encoding="utf-8")
-    project, summary = check_project([str(f) for f in with_imports(file, root, python)])
+    project, summary = check_project([str(f) for f in with_imports(file, root)])
     note = ""
     if any(applied.values()):
         note = f"jig fix rewrote {file.name} ({', '.join(f'{c} x{n}' for c, n in applied.items() if n)}); re-read it before editing.\n"
@@ -190,8 +179,7 @@ def stop(event: dict) -> int:
     changed = [root / f for f in state["changed"] if (root / f).is_file()]
     if not changed or state["blocks"] >= MAX_STOP_BLOCKS:
         return 0  # nothing to check, or already pushed back enough: never trap the session
-    python = checks_python(root)
-    files = sorted({f for c in changed for f in with_imports(c, root, python)})
+    files = sorted({f for c in changed for f in with_imports(c, root)})
     project, summary = check_project([str(f) for f in files])
     if summary["ok"]:
         return 0

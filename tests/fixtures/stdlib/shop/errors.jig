@@ -1,3 +1,5 @@
+module shop.errors
+
 class ShopError(Exception):
     """Base error."""
 

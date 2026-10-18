@@ -20,28 +20,22 @@ def _skipped(rel: Path) -> bool:
     return bool(folders & SKIP_DIRS or folders & TEST_DIRS)
 
 
-def source_files(root: Path, python: bool = False) -> list[Path]:
-    """The project's .jig files, plus its plain .py files when python is set (not tests, not lib/ adapters)."""
-    found = [f for f in root.rglob("*.jig") if f.is_file() and not _skipped(f.relative_to(root))]
-    if python:
-        for f in root.rglob("*.py"):
-            rel = f.relative_to(root)
-            if f.is_file() and not _skipped(rel) and not f.name.startswith("test_") and rel.parts[0] != "lib":
-                found.append(f)
-    return sorted(found)
+def source_files(root: Path) -> list[Path]:
+    """The project's .jig files."""
+    return sorted(f for f in root.rglob("*.jig") if f.is_file() and not _skipped(f.relative_to(root)))
 
 
-def discover(paths: list[str], python: bool = False) -> list[Path]:
+def discover(paths: list[str]) -> list[Path]:
     """The source files named by paths: directories are searched, files are taken as given."""
     files: list[Path] = []
     for p in paths:
         path = Path(p)
         if path.is_dir():
-            files += source_files(path, python)
-        elif path.suffix in (".jig", ".py") and path.is_file():
+            files += source_files(path)
+        elif path.suffix == ".jig" and path.is_file():
             files.append(path)
         else:
-            raise ValueError(f"not a .jig/.py file or directory: {p}")
+            raise ValueError(f"not a .jig file or a directory: {p}")
     return files
 
 
@@ -65,7 +59,7 @@ def project_root(start: Path, fallback: Path | None = None) -> Path:
 
 
 def project_config(start: Path) -> dict[str, Any]:
-    """.jig/config.json of the project start is in: {"python": bool, "entry": "module.function", ...}."""
+    """.jig/config.json of the project start is in: {"entry": "module.function", ...}."""
     f = project_root(start) / ".jig" / "config.json"
     try:
         return json.loads(f.read_text(encoding="utf-8"))

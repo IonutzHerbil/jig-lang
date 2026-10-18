@@ -1,3 +1,5 @@
+module billing.store
+
 """In-memory persistence. Tests call reset() for a clean store."""
 
 from billing.errors import NotFound

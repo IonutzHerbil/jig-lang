@@ -281,15 +281,6 @@ def toggle(todo_id: int) -> Html:
 `jig build`; the image cannot be built while anything fails. The second stage is plain `python:slim` with the
 compiled program only: no Jig, no dependencies. `jig new` writes one for every project.
 
-## Existing Python codebases
-
-`jig check --py <dir>` checks plain `.py` files as they are: no `module` header (names come from the package
-path), any formatting and naming style, and effectful standard-library modules (`time`, `logging`, `os`, ...)
-whose use is tracked as an effect. Test directories and `test_*.py` are skipped; `lib/` holds third-party
-clients whose `.manifest` files give Jig their exact API, exceptions included. Everything Jig checks still
-applies: unknown names, imports, fields and methods (also on standard-library objects such as `Counter` or
-`date`), wrong arguments, library APIs, and types through calls, loops and containers.
-
 ## Project files
 
 A project directory may hold three kinds of files next to its `.jig` code. `jig check` loads them from the
@@ -341,10 +332,10 @@ Reference material for the model writing code. Not checked.
 
 | Command | Does |
 | --- | --- |
-| `jig new <dir> [--py \| --web]` | start a project (plain Python, or a web app), with Claude Code and a Dockerfile |
-| `jig init [dir] [--py] [--user]` | add Jig and the Claude Code hooks to an existing project, or to every project |
-| `jig check <paths> [--py] [--pretty \| --for-model] [--no-examples]` | every check, then the examples; JSON by default; exit 1 on errors |
-| `jig gate [paths] [--py]` | checks, then the project's tests; changes nothing (CI, before committing) |
+| `jig new <dir> [--web]` | start a project (or a web app), with Claude Code and a Dockerfile |
+| `jig init [dir] [--user]` | add the Claude Code skill and hooks to a project, or to every project |
+| `jig check <paths> [--pretty \| --for-model] [--no-examples]` | every check, then the examples; JSON by default; exit 1 on errors |
+| `jig gate [paths]` | checks, then the project's tests against the compiled program; changes nothing (CI, before committing) |
 | `jig run [paths] [--entry m.f]` | check, build, and start the entry (the config's by default): call a function, with a real `Ctx` if it takes one, or serve a web app |
 | `jig fix <paths> [--check]` | formatting, if/elif chains to `match` (D003), missing imports and module paths when unambiguous |
 | `jig fmt <paths> [--check]` | canonical formatting (spaces, no trailing whitespace, sorted imports) |

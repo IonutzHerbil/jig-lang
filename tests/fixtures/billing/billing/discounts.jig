@@ -1,3 +1,5 @@
+module billing.discounts
+
 """Coupons."""
 
 from dataclasses import dataclass

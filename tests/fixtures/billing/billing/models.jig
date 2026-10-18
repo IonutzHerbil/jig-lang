@@ -1,3 +1,5 @@
+module billing.models
+
 """Domain types. Amounts are integer cents; days are integer day numbers (day 0 is the service launch)."""
 
 from dataclasses import dataclass, field

@@ -39,7 +39,7 @@ def test_fix_adds_unambiguous_imports(tmp_path):
 
 
 def test_new_jig_project_checks_runs_and_passes_the_gate(tmp_path):
-    new(tmp_path / "shop", python=False)
+    new(tmp_path / "shop")
     ok, diags, examples = check(tmp_path / "shop")
     assert ok and examples["passed"] == 2, diags
     assert jig("run", ".", "--entry", "shop.app.main", cwd=tmp_path / "shop").stdout.strip() == "Hello, world!"
@@ -48,17 +48,11 @@ def test_new_jig_project_checks_runs_and_passes_the_gate(tmp_path):
     assert set(settings["hooks"]) == {"SessionStart", "PostToolUse", "Stop"}
 
 
-def test_new_python_project_passes_the_gate(tmp_path):
-    new(tmp_path / "pyshop", python=True)
-    result = jig("gate", "--py", ".", cwd=tmp_path / "pyshop")
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
 def test_gate_fails_on_a_bug_the_tests_miss(copy_of):
     repo = copy_of("tests/fixtures/billing")
-    with open(repo / "billing" / "reports.py", "a", encoding="utf-8") as f:
+    with open(repo / "billing" / "reports.jig", "a", encoding="utf-8") as f:
         f.write("\n\ndef owner_email(sub_id: str) -> str:\n    return store.get_customer(sub_id).mail\n")
-    result = jig("gate", "--py", str(repo))
+    result = jig("gate", str(repo))
     assert result.returncode == 1
     assert "no field 'mail'" in result.stdout and "20 passed" in result.stdout
 
@@ -71,12 +65,11 @@ def hook(kind, event):
 def test_hooks_map_check_remember_and_gate(copy_of):
     repo = copy_of("tests/fixtures/billing")
     (repo / ".jig").mkdir()
-    (repo / ".jig" / "config.json").write_text('{"python": true}', encoding="utf-8")
 
     session = json.loads(hook("session", {"cwd": str(repo), "session_id": "s"}).stdout)
     assert "def get_customer(customer_id: str) -> Customer" in session["hookSpecificOutput"]["additionalContext"]
 
-    target = repo / "billing" / "notifications.py"
+    target = repo / "billing" / "notifications.jig"
     with open(target, "a", encoding="utf-8") as f:
         f.write("\n\ndef owed(invoice_id: str) -> str:\n    return store.get_invoice(invoice_id).currency\n")
     edit = {"cwd": str(repo), "session_id": "s", "tool_input": {"file_path": str(target)}}
@@ -133,7 +126,7 @@ def test_repl_checks_each_input_before_running_it(tmp_path, monkeypatch):
 
 
 def test_entry_point_launcher_and_dockerfile(tmp_path):
-    new(tmp_path / "hello", python=False)
+    new(tmp_path / "hello")
     root = tmp_path / "hello"
     assert json.loads((root / ".jig" / "config.json").read_text(encoding="utf-8"))["entry"] == "hello.app.main"
     dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
@@ -154,7 +147,7 @@ def test_do_repairs_until_the_checks_pass_and_touches_nothing_before(tmp_path):
     from jig.do import report, run
     from jig.llm import Reply
 
-    new(tmp_path / "shop", python=False)
+    new(tmp_path / "shop")
     root = tmp_path / "shop"
     before = {p: p.read_text(encoding="utf-8") for p in root.rglob("*.jig") if p.is_file()}
     farewell = '''module shop.farewell

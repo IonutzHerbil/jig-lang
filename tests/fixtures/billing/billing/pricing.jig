@@ -1,3 +1,5 @@
+module billing.pricing
+
 """What a subscription costs."""
 
 from billing.catalog import get_plan

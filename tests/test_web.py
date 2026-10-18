@@ -55,7 +55,7 @@ def test_web_app_checks_and_web_mistakes(tmp_path):
     ok, diags, _ = check(tmp_path / "web", examples=False)
     found = [(code, m.split(";")[0]) for code, m in diags]
     assert found == [
-        ("R002", "'dvi' is not an HTML element"),
+        ("R002", "HTML has no element 'dvi'"),
         ("R004", "no route answers GET /todo"),
         ("R002", "<input> has no attribute 'placholder'"),
         ("R002", "<div> has no attribute 'klass'"),
@@ -128,7 +128,7 @@ def test_jig_serve_rechecks_rebuilds_and_reports_errors(tmp_path):
 def test_new_web_project_checks_builds_and_serves_static(tmp_path):
     from jig.project import new
 
-    new(tmp_path / "site", python=False, web=True)
+    new(tmp_path / "site", web=True)
     root = tmp_path / "site"
     assert json.loads((root / ".jig" / "config.json").read_text(encoding="utf-8"))["entry"] == "site_app.app.app"
     ok, diags, examples = check(root)

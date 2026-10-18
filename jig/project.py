@@ -1,10 +1,8 @@
 """Start a Jig project, or add Jig to an existing one.
 
-    jig new <dir> [--py]      a fresh project: an example module, project files, Claude Code set up
-    jig init [dir] [--py]     add Jig to an existing project: Claude Code skill and hooks, .jig/config.json
+    jig new <dir> [--web]     a fresh project: an example module (or a web app), project files, Claude Code, Docker
+    jig init [dir]            add Jig to an existing project: Claude Code skill and hooks, .jig/config.json
     jig init --user           the Claude Code skill and hooks for every project on this machine
-
---py: the project is plain Python (.py files) that Jig checks, instead of .jig files.
 """
 
 from __future__ import annotations
@@ -64,7 +62,7 @@ def setup_claude(claude_dir: Path) -> list[str]:
 # Until jig-lang is on PyPI, images install it from GitHub; `docker build --build-arg JIG=jig-lang==0.3.0` pins it.
 JIG_SOURCE = "https://github.com/IonutzHerbil/jig-lang/archive/refs/heads/main.tar.gz"
 
-DOCKERFILE_JIG = """# Written by `jig docker`. The image builds only when every Jig check, example and test passes.
+DOCKERFILE = """# Written by `jig docker`. The image builds only when every Jig check, example and test passes.
 #   docker build -t {name} .
 #   docker run --rm{ports} {name}
 
@@ -85,28 +83,6 @@ ENV PYTHONUNBUFFERED=1{expose}
 CMD ["python", "/app"]
 """
 
-DOCKERFILE_PY = """# Written by `jig docker`. The image builds only when every Jig check and test passes.
-#   docker build -t {name} .
-#   docker run --rm {name}
-
-# 1. Check and test with Jig.
-FROM python:3.13-slim AS check
-ARG JIG={source}
-WORKDIR /src
-RUN pip install --no-cache-dir "$JIG" pytest
-COPY . .
-RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
-RUN jig gate --py .
-
-# 2. Run the checked code.
-FROM python:3.13-slim
-WORKDIR /app
-COPY --from=check /src /app
-RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
-ENV PYTHONUNBUFFERED=1
-CMD ["python", "-m", "{entry}"]
-"""
-
 DOCKERIGNORE = """.git
 .jig
 .claude
@@ -120,14 +96,13 @@ venv
 """
 
 
-def docker_files(root: Path, python: bool, entry: str | None, force: bool = False, web: bool = False) -> list[str]:
+def docker_files(root: Path, entry: str | None, force: bool = False, web: bool = False) -> list[str]:
     """Write a Dockerfile and .dockerignore for the project. Returns what was done."""
     name = re.sub(r"[^a-z0-9_.-]", "-", root.name.lower()).strip("-") or "app"
     if not entry:
         pkg = re.sub(r"\W", "_", root.name.lower()).strip("_") or "app"
-        entry = f"{pkg}.app" if python else f"{pkg}.app.main"
-    template = DOCKERFILE_PY if python else DOCKERFILE_JIG
-    text = template.format(name=name, source=JIG_SOURCE, entry=entry,
+        entry = f"{pkg}.app.main"
+    text = DOCKERFILE.format(name=name, source=JIG_SOURCE, entry=entry,
                            ports=" -p 8000:8000" if web else "", expose="\nEXPOSE 8000" if web else "")
     done = []
     dockerfile = root / "Dockerfile"
@@ -143,7 +118,7 @@ def docker_files(root: Path, python: bool, entry: str | None, force: bool = Fals
     return done
 
 
-def init(root: Path, python: bool, entry: str | None = None) -> list[str]:
+def init(root: Path, entry: str | None = None) -> list[str]:
     """Add Jig to a project: Claude Code skill and hooks, .jig/config.json, .gitignore entries."""
     done = []
     added = setup_claude(root / ".claude")
@@ -151,7 +126,7 @@ def init(root: Path, python: bool, entry: str | None = None) -> list[str]:
     config = root / ".jig" / "config.json"
     config.parent.mkdir(parents=True, exist_ok=True)
     current = json.loads(config.read_text(encoding="utf-8")) if config.exists() else {}
-    current["python"] = python or current.get("python", False)
+    current.pop("python", None)  # plain-Python mode is gone
     if entry:
         current["entry"] = entry
     config.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
@@ -188,33 +163,6 @@ from {pkg}.greeting import greet
 def main() -> str:
     """The program's entry point: `jig run .` (set in .jig/config.json)."""
     return greet("world")
-''',
-    }
-
-
-def _py_files(pkg: str) -> dict[str, str]:
-    return {
-        f"{pkg}/__init__.py": f'"""{pkg}."""\n',
-        f"{pkg}/greeting.py": '''def greet(name: str) -> str:
-    """A friendly greeting; an empty name greets everyone."""
-    return f"Hello, {name or 'everyone'}!"
-''',
-        f"{pkg}/app.py": f'''from {pkg}.greeting import greet
-
-
-def main() -> str:
-    return greet("world")
-
-
-if __name__ == "__main__":
-    print(main())
-''',
-        "tests/test_greeting.py": f'''from {pkg}.greeting import greet
-
-
-def test_greet():
-    assert greet("Ada") == "Hello, Ada!"
-    assert greet("") == "Hello, everyone!"
 ''',
     }
 
@@ -313,10 +261,9 @@ button { padding: .5rem 1rem; font: inherit; cursor: pointer; }
     }
 
 
-def _readme(name: str, pkg: str, python: bool, web: bool = False) -> str:
-    check = "jig check --py --pretty ." if python else "jig check --pretty ."
-    run = f"python -m {pkg}.app" if python else "jig serve .            develop: re-checks on every save, reloads the browser" if web else "jig run ."
-    kind = "plain Python, checked by Jig" if python else "Jig web app (std.web + htmx)" if web else "Jig (.jig files)"
+def _readme(name: str, pkg: str, web: bool = False) -> str:
+    run = "jig serve .            develop: re-checks on every save, reloads the browser" if web else "jig run ."
+    kind = "Jig web app (std.web + htmx)" if web else "Jig"
     return f"""# {name}
 
 A project in {kind}.
@@ -331,8 +278,8 @@ Or ask Jig directly: `jig do "add a farewell next to the greeting"`
 ## Commands
 
 ```
-{check}      every check
-jig gate{' --py' if python else ''} .         checks, then tests: use in CI and before committing
+jig check --pretty .   every check
+jig gate .             checks, then tests: use in CI and before committing
 {run}
 docker build -t {pkg} . && docker run --rm{' -p 8000:8000' if web else ''} {pkg}       the image builds only when every check passes
 ```
@@ -344,7 +291,7 @@ docker build -t {pkg} . && docker run --rm{' -p 8000:8000' if web else ''} {pkg}
 """
 
 
-def new(target: Path, python: bool, web: bool = False) -> list[str]:
+def new(target: Path, web: bool = False) -> list[str]:
     """Create a fresh project in target (which must not exist or be empty)."""
     if target.exists() and any(target.iterdir()):
         raise SystemExit(f"{target} is not empty; use `jig init` to add Jig to an existing project")
@@ -354,9 +301,9 @@ def new(target: Path, python: bool, web: bool = False) -> list[str]:
         pkg = f"app_{pkg}"
     if pkg in sys.stdlib_module_names:  # `site`, `test`, `email`: the built program would import Python's instead
         pkg = f"{pkg}_app"
-    files = _py_files(pkg) if python else _web_files(pkg) if web else _jig_files(pkg)
+    files = _web_files(pkg) if web else _jig_files(pkg)
     files |= {
-        "README.md": _readme(name, pkg, python, web),
+        "README.md": _readme(name, pkg, web),
         "lib/README.md": "Library manifests: one `<name>.manifest` per third-party service or package. "
                          "Format: `jig doc manifest`.\n",
         ".decisions/README.md": "Project decisions: one `<id>.decision` per rule. Jig enforces the ✓ newtype "
@@ -366,7 +313,6 @@ def new(target: Path, python: bool, web: bool = False) -> list[str]:
         path = target / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(format_source(text) if rel.endswith(".jig") else text, encoding="utf-8")
-    entry = f"{pkg}.app" if python else f"{pkg}.app.app" if web else f"{pkg}.app.main"
-    kind = "Python" if python else "Jig web" if web else "Jig"
-    return [f"created {target} ({kind} project, package '{pkg}')", *init(target, python, entry),
-            *docker_files(target, python, entry, web=web)]
+    entry = f"{pkg}.app.app" if web else f"{pkg}.app.main"
+    return [f"created {target} ({'Jig web' if web else 'Jig'} project, package '{pkg}')", *init(target, entry),
+            *docker_files(target, entry, web=web)]

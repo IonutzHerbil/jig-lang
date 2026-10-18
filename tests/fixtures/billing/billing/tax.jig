@@ -1,3 +1,5 @@
+module billing.tax
+
 """Sales tax, from the external tax service."""
 
 from billing.models import Customer

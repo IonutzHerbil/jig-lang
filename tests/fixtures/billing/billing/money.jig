@@ -1,3 +1,5 @@
+module billing.money
+
 """Money helpers. Every amount is an int number of cents."""
 
 SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}

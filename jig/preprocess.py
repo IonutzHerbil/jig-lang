@@ -201,21 +201,18 @@ def preprocess(text: str, file: str) -> tuple[Preprocessed, list[Diagnostic]]:
             while def_stack and indent <= def_stack[-1][0]:
                 def_stack.pop()
 
-        # module header (a .py file may omit it: its name comes from its path)
+        # the module line
         if pre.module is None and code and not header_checked:
             header_checked = True
             m = MODULE_RE.fullmatch(code)
             if m and indent == 0:
                 pre.module, pre.module_line = m.group(1), idx
-                out.append("")
-                state = new_state
-                continue
-            if not file.endswith(".py"):
+            else:
                 diag("S001", "a Jig file must start with 'module <name>'", idx)
                 pre.module, pre.module_line = "", idx
-                out.append("")
-                state = new_state
-                continue
+            out.append("")
+            state = new_state
+            continue
 
         if indent == 0 and code:
             m = NEWTYPE_RE.fullmatch(code)

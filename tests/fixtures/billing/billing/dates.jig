@@ -1,3 +1,5 @@
+module billing.dates
+
 """Billing periods on integer day numbers."""
 
 from billing.models import Interval

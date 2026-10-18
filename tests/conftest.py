@@ -11,9 +11,9 @@ REPO = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).with_name("fixtures")
 
 
-def check(*paths: Path | str, py: bool = False, examples: bool = True) -> tuple[bool, list[tuple[str, str]], dict]:
+def check(*paths: Path | str, examples: bool = True) -> tuple[bool, list[tuple[str, str]], dict]:
     """(ok, [(code, message)], examples summary) for jig check on paths."""
-    project, summary = check_project([str(p) for p in paths], run_ex=examples, py=py)
+    project, summary = check_project([str(p) for p in paths], run_ex=examples)
     diags = [(d["code"], d["message"]) for d in summary["diagnostics"] if d["severity"] == "error"]
     return summary["ok"], diags, summary["examples"]
 

@@ -1,3 +1,5 @@
+module billing.errors
+
 """Errors raised by the billing service."""
 
 

@@ -1,3 +1,5 @@
+module billing.notifications
+
 """Customer emails."""
 
 from billing import store

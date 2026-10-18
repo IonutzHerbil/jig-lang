@@ -33,21 +33,21 @@ def test_broken_examples_show_every_kind_of_mistake():
     assert set(codes(diags)) >= {"C006", "DEC001", "E001", "R001", "R002", "R003", "T001", "T002"}
 
 
-def test_plain_python_package_mistakes():
-    ok, diags, _ = check(FIXTURES / "realpy" / "shop", py=True, examples=False)
+def test_standard_library_and_record_mistakes():
+    ok, diags, _ = check(FIXTURES / "stdlib", examples=False)
     messages = " | ".join(m for _, m in diags)
     assert "has no attribute 'monotonik'" in messages
     assert "no field 'customer_name'; its fields:" in messages
     assert "'place' takes 1 arguments, got 2" in messages
     assert "'Counter' (collections) has no attribute 'most_comon'" in messages
     assert "'date' (datetime) has no attribute 'yeer'" in messages
-    assert "log" not in [m.split("'")[1] for _, m in diags if "attribute" in m], "logger.name must not be flagged"
+    assert len(diags) == 5, diags  # the logger's attributes are not known, so they are not flagged
 
 
 @pytest.mark.skipif(not all(importlib.util.find_spec(m) for m in ("pandas", "requests", "pydantic")),
                     reason="needs pandas, requests and pydantic installed")
 def test_third_party_packages_checked_against_the_real_package():
-    ok, diags, _ = check(FIXTURES / "thirdparty" / "app", py=True, examples=False)
+    ok, diags, _ = check(FIXTURES / "thirdparty", examples=False)
     messages = " | ".join(m for _, m in diags)
     assert "module 'pandas' has no attribute 'read_csvv'" in messages
     assert "unexpected keyword argument 'sepp'; did you mean 'sep'?" in messages
@@ -58,7 +58,7 @@ def test_third_party_packages_checked_against_the_real_package():
 
 
 def test_billing_codebase_is_clean():
-    ok, diags, _ = check(FIXTURES / "billing", py=True, examples=False)
+    ok, diags, _ = check(FIXTURES / "billing", examples=False)
     assert ok, diags
 
 
@@ -92,30 +92,6 @@ def minutes(who: str) -> Result[int, MyError]:
 ''', encoding="utf-8")
     ok, diags, _ = check(tmp_path, examples=False)
     assert ("R002" in codes(diags)) and ("T009" in codes(diags)), diags
-
-
-def test_python_rules_are_not_imposed_on_python_files(tmp_path):
-    (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "__init__.py").write_text("")
-    (tmp_path / "pkg" / "app.py").write_text('''import logging
-
-log = logging.getLogger(__name__)
-
-
-class Service:
-    def run(self) -> int:
-        return 1
-
-
-def main() -> int:
-    return Service().run()
-
-
-if __name__ == "__main__":
-    print(main())
-''', encoding="utf-8")
-    ok, diags, _ = check(tmp_path, py=True, examples=False)
-    assert ok, diags
 
 
 def test_types_are_checked_at_every_boundary(tmp_path):

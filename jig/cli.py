@@ -22,18 +22,18 @@ from .probes import render_probes, run_probes
 from .transpiler import build
 
 
-def discover(paths: list[str], py: bool = False) -> list[Path]:
+def discover(paths: list[str]) -> list[Path]:
     """The source files under paths; a path that is neither stops the command."""
     try:
-        return files.discover(paths, py)
+        return files.discover(paths)
     except ValueError as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         raise SystemExit(2) from None
 
 
-def check_project(paths: list[str], run_ex: bool = True, py: bool = False) -> tuple[Project, dict[str, Any]]:
+def check_project(paths: list[str], run_ex: bool = True) -> tuple[Project, dict[str, Any]]:
     project = Project()
-    project.load(discover(paths, py))
+    project.load(discover(paths))
     total = passed = 0
     if run_ex and not project.has_errors:
         with tempfile.TemporaryDirectory() as tmp:
@@ -59,7 +59,7 @@ def feedback_for_model(project: Project) -> str:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    project, summary = check_project(args.paths, run_ex=not args.no_examples, py=args.py)
+    project, summary = check_project(args.paths, run_ex=not args.no_examples)
     if args.for_model:
         print(feedback_for_model(project) or "ok")
     elif args.pretty:
@@ -126,7 +126,7 @@ def cmd_docker(args: argparse.Namespace) -> int:
 
     root = Path(args.dir).resolve()
     config = files.project_config(root)
-    for line in docker_files(root, bool(config.get("python")), config.get("entry"), force=args.force):
+    for line in docker_files(root, config.get("entry"), force=args.force):
         print(line)
     name = re.sub(r"[^a-z0-9_.-]", "-", root.name.lower()).strip("-") or "app"
     print(f"\nBuild and run:  docker build -t {name} {args.dir}  &&  docker run --rm {name}")
@@ -161,11 +161,9 @@ def cmd_probe(args: argparse.Namespace) -> int:
 def cmd_new(args: argparse.Namespace) -> int:
     from .project import new
 
-    if args.web and args.py:
-        raise SystemExit("--web makes a Jig web app; it cannot be combined with --py")
-    for line in new(Path(args.dir).resolve(), args.py, args.web):
+    for line in new(Path(args.dir).resolve(), args.web):
         print(line)
-    then = "jig serve" if args.web else f"jig check{' --py' if args.py else ''} --pretty ."
+    then = "jig serve" if args.web else "jig check --pretty ."
     print(f"\nNext: cd {args.dir} and open it in Claude Code, or run `{then}`")
     return 0
 
@@ -177,7 +175,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         added = setup_claude(Path.home() / ".claude")
         print(f"Claude Code: skill and hooks in {Path.home() / '.claude'}" + (f" (added {', '.join(added)})" if added else ""))
         return 0
-    for line in init(Path(args.dir).resolve(), args.py):
+    for line in init(Path(args.dir).resolve()):
         print(line)
     return 0
 
@@ -201,23 +199,31 @@ def cmd_doc(args: argparse.Namespace) -> int:
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
-    """The quality gate for CI and pre-commit: every check, then the project's tests. Changes nothing."""
+    """The quality gate for CI and pre-commit: every check, then the project's tests (tests/, with pytest) against
+    the compiled program, the code production runs. Changes nothing."""
     import os
     import subprocess
 
     root = Path(args.paths[0]).resolve() if len(args.paths) == 1 and Path(args.paths[0]).is_dir() else Path.cwd()
-    project, summary = check_project(args.paths, run_ex=True, py=args.py)
+    project, summary = check_project(args.paths, run_ex=True)
     failed = not summary["ok"]
     print(feedback_for_model(project) if failed else f"jig check: ok ({len(project.modules)} modules)")
     tests = root / "tests"
     if not args.no_tests and tests.is_dir():
-        p = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider", str(tests)],
-            cwd=root, env={**os.environ, "PYTHONPATH": str(root)}, capture_output=True, text=True,
-        )
+        with tempfile.TemporaryDirectory() as built:
+            try:  # tests run even when a check failed: both results are worth knowing
+                build(project, Path(built), root=root)
+            except Exception as e:
+                print(f"tests: not run, the project does not compile ({e})")
+                print("gate: FAILED")
+                return 1
+            p = subprocess.run(
+                [sys.executable, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider", str(tests)],
+                cwd=root, env={**os.environ, "PYTHONPATH": built}, capture_output=True, text=True,
+            )
         lines = (p.stdout + p.stderr).strip().splitlines()
         print("tests: " + (lines[-1] if lines else "no output"))
-        if p.returncode not in (0, 5):
+        if p.returncode not in (0, 5):  # 5: no tests collected
             failed = True
             print("\n".join(lines[-40:]))
     print("gate: " + ("FAILED" if failed else "passed"))
@@ -267,7 +273,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("paths", nargs="+")
     p.add_argument("--pretty", action="store_true", help="human-readable output")
     p.add_argument("--for-model", action="store_true", help="compact text for a model to repair from")
-    p.add_argument("--py", action="store_true", help="also check .py source files (a plain Python codebase)")
     p.add_argument("--no-examples", action="store_true", help="skip running examples")
     p.set_defaults(func=cmd_check)
 
@@ -294,19 +299,16 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("new", help="start a fresh project with Claude Code set up")
     p.add_argument("dir")
-    p.add_argument("--py", action="store_true", help="a plain Python project checked by Jig, instead of .jig files")
     p.add_argument("--web", action="store_true", help="a web app: std.web pages and routes, htmx, jig serve")
     p.set_defaults(func=cmd_new)
 
     p = sub.add_parser("init", help="add Jig to an existing project: Claude Code skill and hooks, config")
     p.add_argument("dir", nargs="?", default=".")
-    p.add_argument("--py", action="store_true", help="check the project's plain .py files")
     p.add_argument("--user", action="store_true", help="set up Claude Code for every project on this machine")
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("gate", help="CI / pre-commit gate: every check, then the project's tests; changes nothing")
     p.add_argument("paths", nargs="*", default=["."])
-    p.add_argument("--py", action="store_true", help="also check .py source files")
     p.add_argument("--no-tests", action="store_true", help="skip running tests/")
     p.set_defaults(func=cmd_gate)
 
