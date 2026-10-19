@@ -147,10 +147,22 @@ def test_entry_point_launcher_and_dockerfile(tmp_path):
     assert bad.returncode == 2 and "takes parameters (name)" in bad.stdout
 
 
-def test_do_repairs_until_the_checks_pass_and_touches_nothing_before(tmp_path):
+def test_do_repairs_until_the_checks_pass_and_touches_nothing_before(tmp_path, monkeypatch):
     """jig do with a scripted model: a buggy first answer, the checker's feedback, a fixed second answer."""
+    import tempfile
+
     from jig.do import report, run
     from jig.llm import Reply
+
+    if sys.platform == "win32":  # like CI runners: the temp folder given by its 8.3 short name (RUNNER~1)
+        import ctypes
+
+        scratch = tmp_path / "a-temp-folder-with-a-long-name"
+        scratch.mkdir()
+        short = ctypes.create_unicode_buffer(500)
+        ctypes.windll.kernel32.GetShortPathNameW(str(scratch), short, 500)
+        assert short.value and short.value != str(scratch)
+        monkeypatch.setattr(tempfile, "tempdir", short.value)
 
     new(tmp_path / "shop")
     root = tmp_path / "shop"

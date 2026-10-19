@@ -76,7 +76,8 @@ def run(request: str, root: Path, model: Gemini, rounds: int, log=print) -> tupl
         manual=(CARDS / "jig_short.md").read_text(encoding="utf-8"),
         project_manual=(CARDS / "jig_short_project.md").read_text(encoding="utf-8"),
     )
-    work = Path(tempfile.mkdtemp(prefix="jig-do-")) / root.name
+    # resolved: on Windows the temp folder can come as an 8.3 short name (RUNNER~1) that later paths do not use
+    work = Path(tempfile.mkdtemp(prefix="jig-do-")).resolve() / root.name
     shutil.copytree(root, work, ignore=shutil.ignore_patterns(*SKIP_DIRS))
     turns = [f"Project files:\n\n{context(root)}\n\nRequest: {request}"]
     changed: set[Path] = set()
