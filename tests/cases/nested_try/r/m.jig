@@ -1,7 +1,5 @@
 module r.m
 
-from std.result import Err, Ok, Result
-
 
 def half(n: int) -> Result[int, str]:
     """Half of an even number."""

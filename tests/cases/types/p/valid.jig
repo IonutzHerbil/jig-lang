@@ -2,8 +2,6 @@ module p.valid
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from std.option import Nothing, Option, Some
-from std.result import Err, Ok, Result
 
 type Money = Money(int)
 

@@ -17,7 +17,6 @@ import re
 from collections import Counter
 
 from shop.types import Customer, Money
-from std.result import Err, Ok, Result
 ```
 
 - Every file starts with `module <dotted.name>`, one module per file. Imports go at the top.
@@ -185,6 +184,7 @@ methods' bodies and its own declarations are checked.
 
 ### Result and Option
 
+`Result`, `Ok`, `Err`, `Option`, `Some` and `Nothing` are built in: no import, like Python's `len` or `dict`.
 `Result[T, E]` is `Ok(value)` or `Err(error)`, with `.is_ok()`, `.is_err()`, `.value`, `.error`, `.map(f)`,
 `.map_err(f)`, `.and_then(f)` and `.unwrap_or(default)`. `Option[T]` is `Some(value)` or `Nothing`, with
 `.is_some()`, `.is_nothing()`, `.value`, `.map(f)`, `.and_then(f)` and `.unwrap_or(default)`. Any other

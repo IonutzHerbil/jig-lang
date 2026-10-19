@@ -1,7 +1,5 @@
 module t.m
 
-from std.option import Nothing, Option, Some
-from std.result import Err, Ok, Result
 
 type Money = Money(int)
 

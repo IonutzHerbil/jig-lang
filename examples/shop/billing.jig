@@ -2,7 +2,6 @@ module shop.billing
 
 from shop.types import Customer, Money, PaymentError, UserId
 from std.record import replace
-from std.result import Err, Ok, Result
 
 ALICE: Customer = Customer(id=UserId(1), email="alice@example.com", balance=Money(1000))
 

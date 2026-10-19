@@ -3,7 +3,6 @@ module shop.app
 from shop.billing import charge, describe
 from shop.types import Customer, Money, UserId
 from std.ctx import Ctx, fixed_ctx
-from std.result import Err, Ok
 
 DEMO: Customer = Customer(id=UserId(7), email="demo@example.com", balance=Money(1000))
 

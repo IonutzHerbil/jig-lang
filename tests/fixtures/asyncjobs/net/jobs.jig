@@ -2,8 +2,6 @@ module net.jobs
 
 import asyncio
 
-from std.result import Err, Ok, Result
-
 
 enum JobError:
     EMPTY

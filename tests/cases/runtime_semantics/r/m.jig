@@ -1,8 +1,6 @@
 module r.m
 
-from std.option import Nothing, Option, Some
 from std.record import replace
-from std.result import Err, Ok, Result
 
 type Money = Money(int)
 

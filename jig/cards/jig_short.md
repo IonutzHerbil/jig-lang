@@ -23,7 +23,8 @@ Jig is Python 3.12 plus checks. Write normal, idiomatic Python; it is valid Jig.
   `Money(5) + Money(1)` works, `Money(5) + 1` does not; scale by an int with `*` and `//`; unwrap with
   `int(m)` (there is no `.value`). Copy a record with changes: `replace(r, balance=Money(0))` from
   `std.record`.
-- **Results**: `from std.result import Ok, Err, Result`; `x?` unwraps an `Ok` or returns the `Err` early.
+- **Results**: `Result`, `Ok`, `Err`, `Option`, `Some`, `Nothing` are built in (no import); `x?` unwraps an
+  `Ok` or returns the `Err` early.
   Methods: `.is_ok() .is_err() .value .error .map(f) .map_err(f) .and_then(f) .unwrap_or(d)` (no `unwrap`).
   When the request names an error for some input, return exactly that `Err(...)`; propagate errors from the
   functions you call with `?` instead of re-checking their inputs. Exceptions also work as in Python.

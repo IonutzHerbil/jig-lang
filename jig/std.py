@@ -22,6 +22,11 @@ STD: dict[str, dict[str, str]] = {
     },
 }
 
+# Built in, like Python's builtins: every module can use them without an import. Measured: models never predict
+# the `from std.result import ...` line (0 of 22), so it is not part of the language.
+PRELUDE: dict[str, str] = {"Result": "std.result", "Ok": "std.result", "Err": "std.result",
+                           "Option": "std.option", "Some": "std.option", "Nothing": "std.option"}
+
 # std types whose values Jig follows, their members (with types, as annotations), and what std functions return.
 STD_TYPES = frozenset({("std.web", "App"), ("std.web", "Html"), ("std.web", "Request"), ("std.web", "Response")})
 STD_TYPE_MEMBERS: dict[str, dict[str, str]] = {

@@ -1,6 +1,5 @@
 module datastructures.stack
 
-from std.option import Nothing, Option, Some
 
 record Stack:
     items: list[int]

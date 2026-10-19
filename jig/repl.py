@@ -36,7 +36,7 @@ from .diagnostics import describe_fix
 from .preprocess import preprocess
 from .transpiler import _Transformer, build
 
-HEADER = "module repl\n\nfrom std.ctx import Ctx, fixed_ctx\nfrom std.record import replace\nfrom std.option import Nothing, Option, Some\nfrom std.result import Err, Ok, Result\n"
+HEADER = "module repl\n\nfrom std.ctx import Ctx, fixed_ctx\nfrom std.record import replace\n"
 WRAPPER = "__repl__"
 # The session is a scratchpad, not a module anyone imports: its own naming and purity rules do not apply.
 RELAXED = {"S003", "E004", "T004", "W001", "D001", "D003"}

@@ -1,7 +1,5 @@
 module test_types
 
-from std.option import Nothing, Option, Some
-from std.result import Err, Ok, Result
 
 type UserId = UserId(int)
 type Name = Name(str)

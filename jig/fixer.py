@@ -9,7 +9,9 @@ Anything that needs judgment (a missing effect, an unknown name, a failing examp
 from __future__ import annotations
 
 import ast
+import re
 
+from . import std
 from .formatter import format_source
 from .preprocess import preprocess
 
@@ -101,7 +103,24 @@ def _match_fix(text: str) -> tuple[str, int]:
             skipped.add(chain[0].lineno)
 
 
+def _drop_prelude_imports(text: str) -> tuple[str, int]:
+    """`from std.result import Err, Ok, Result`: built-in names need no import, so the line goes."""
+    out, dropped = [], 0
+    for line in text.split("\n"):
+        m = re.fullmatch(r"from (std\.result|std\.option) import (.+)", line)
+        if m:
+            names = [n.strip() for n in m.group(2).split(",")]
+            kept = [n for n in names if n not in std.PRELUDE]
+            dropped += len(names) - len(kept)
+            if kept:
+                out.append(f"from {m.group(1)} import {', '.join(kept)}")
+            continue
+        out.append(line)
+    return "\n".join(out), dropped
+
+
 def fix_source(text: str) -> tuple[str, dict[str, int]]:
     """Apply every mechanical fix. Returns the new text and how many of each fix were applied."""
+    text, imports = _drop_prelude_imports(text)
     text, chains = _match_fix(format_source(text))
-    return format_source(text), {"D003": chains}
+    return format_source(text), {"D003": chains, "built-in imports": imports}

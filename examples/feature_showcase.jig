@@ -1,9 +1,7 @@
 module feature_showcase
 
 from std.ctx import Ctx, fixed_ctx
-from std.option import Nothing, Option, Some
 from std.record import replace
-from std.result import Err, Ok, Result
 
 type UserId = UserId(int)
 type Score = Score(int)

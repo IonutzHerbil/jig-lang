@@ -1,0 +1,30 @@
+module m.a
+
+
+enum PayError:
+    DECLINED
+
+
+def charge(cents: int) -> Result[int, PayError]:
+    """No import needed for Result, Ok, Err."""
+    examples:
+        charge(5) -> Ok(5)
+        charge(0) -> Err(PayError.DECLINED)
+    if cents <= 0:
+        return Err(PayError.DECLINED)
+    return Ok(cents)
+
+
+def first(xs: list[int]) -> Option[int]:
+    """Option, Some and Nothing too."""
+    examples:
+        first([]) -> Nothing
+        first([3]) -> Some(3)
+    return Some(xs[0]) if xs else Nothing
+
+
+def twice(cents: int) -> Result[int, PayError]:
+    """? still works."""
+    examples:
+        twice(2) -> Ok(4)
+    return Ok(charge(cents)? * 2)

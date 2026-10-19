@@ -133,6 +133,7 @@ def transpile_module(mod: ModuleInfo) -> str:
     header: list[ast.stmt] = [
         ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
         ast.Import(names=[ast.alias(name="jig_runtime", asname="__jig__")]),
+        ast.ImportFrom(module="jig_runtime", names=[ast.alias(name=n) for n in sorted(std.PRELUDE)], level=0),
     ]
     body = tree.body
     if body and _is_docstring(body[0]):

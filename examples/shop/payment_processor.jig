@@ -2,7 +2,6 @@ module shop.payment_processor
 
 from lib.stripe import Amount, ChargeId, StripeError, charge, create_customer
 from shop.types import Money
-from std.result import Result
 
 
 def process_payment(email: str, amount: Money) -> Result[ChargeId, StripeError]:

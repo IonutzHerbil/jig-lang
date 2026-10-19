@@ -1,7 +1,6 @@
 module p.gaps
 
 from p.valid import Line, Money, Order, Status, total
-from std.result import Err, Ok, Result
 
 
 def g1(o: Order) -> int:

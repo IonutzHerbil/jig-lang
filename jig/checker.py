@@ -536,6 +536,9 @@ class Project(RoutesOfProject):
             target = self.modules.get(target_mod)
             if target is not None:
                 return self.resolve(target, target_name, depth + 1)
+            return None
+        if name in std.PRELUDE:
+            return ("std", std.PRELUDE[name], name)
         return None
 
     def type_desc(self, mod: ModuleInfo, name: str) -> tuple | None:
@@ -1905,6 +1908,7 @@ class BodyChecker(TypeInference, WebChecks, ast.NodeVisitor):
         if (
             node.id in self.locals
             or node.id in std.BUILTINS
+            or node.id in std.PRELUDE
             or node.id in std.INTERNAL
             or node.id in ("__name__", "__doc__")
         ):

@@ -2,7 +2,6 @@ module bank.accounts
 
 from dataclasses import dataclass
 from std.record import replace
-from std.result import Err, Ok, Result
 
 type Money = Money(int)
 

@@ -102,7 +102,6 @@ module shop.billing
 
 from shop.types import Customer, Money, PaymentError
 from std.record import replace
-from std.result import Err, Ok, Result
 
 
 def charge(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:

@@ -3,7 +3,7 @@ module broken.bad
 from shop.billing import ALICE
 from shop.types import Customer, Money, PaymentError
 from std.ctx import Ctx, fixed_ctx
-from std.result import Err, Ok, Reslt
+from std.result import Reslt
 
 
 def refund(customer: Customer, amount: Money) -> Result[Customer, PaymentError]:
