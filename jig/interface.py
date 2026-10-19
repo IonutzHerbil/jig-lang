@@ -12,7 +12,9 @@ def render_interface(mod: ModuleInfo, project: Project) -> str:
     for name, base in mod.newtypes.items():
         lines.append(f"type {name} = {name}({base})")
     for rec, fields in mod.records.items():
-        parts = [f"{f}: {ast.unparse(ann)}" + (" = ..." if has_default else "") for f, (ann, has_default) in fields.items()]
+        parts = [
+            f"{f}: {ast.unparse(ann)}" + (" = ..." if has_default else "") for f, (ann, has_default) in fields.items()
+        ]
         lines.append(f"record {rec}: {', '.join(parts)}")
     for en, variants in mod.enums.items():
         lines.append(f"enum {en}: {' | '.join(variants)}")

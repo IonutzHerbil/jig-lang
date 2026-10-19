@@ -89,15 +89,15 @@ def cmd_fmt(args: argparse.Namespace) -> int:
 
 def cmd_fix(args: argparse.Namespace) -> int:
     changed = []
-    files = discover(args.paths)
-    for path in files:
+    sources = discover(args.paths)
+    for path in sources:
         text = path.read_text(encoding="utf-8")
         fixed, applied = fix_source(text)
         if fixed != text:
             changed.append({"file": str(path), "line": first_difference(text, fixed), "applied": applied})
             if not args.check:
                 path.write_text(fixed, encoding="utf-8")
-    imports = fix_imports(files) if not args.check else {}
+    imports = fix_imports(sources) if not args.check else {}
     print(json.dumps({"check": args.check, "changed": changed, "imports": imports}, indent=2))
     return 1 if (args.check and changed) else 0
 
@@ -173,7 +173,10 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     if args.user:
         added = setup_claude(Path.home() / ".claude")
-        print(f"Claude Code: skill and hooks in {Path.home() / '.claude'}" + (f" (added {', '.join(added)})" if added else ""))
+        print(
+            f"Claude Code: skill and hooks in {Path.home() / '.claude'}"
+            + (f" (added {', '.join(added)})" if added else "")
+        )
         return 0
     for line in init(Path(args.dir).resolve()):
         print(line)
@@ -185,8 +188,9 @@ def cmd_doc(args: argparse.Namespace) -> int:
 
     text = manual.lookup(args.topic)
     if text is None:
-        print(f"no topic '{args.topic}'. Topics: {manual.topic_names()}; or an error code such as T002.",
-              file=sys.stderr)
+        print(
+            f"no topic '{args.topic}'. Topics: {manual.topic_names()}; or an error code such as T002.", file=sys.stderr
+        )
         return 1
     out = text if args.raw else manual.render(text, color=manual.use_color())
     try:
@@ -219,7 +223,10 @@ def cmd_gate(args: argparse.Namespace) -> int:
                 return 1
             p = subprocess.run(
                 [sys.executable, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider", str(tests)],
-                cwd=root, env={**os.environ, "PYTHONPATH": built}, capture_output=True, text=True,
+                cwd=root,
+                env={**os.environ, "PYTHONPATH": built},
+                capture_output=True,
+                text=True,
             )
         lines = (p.stdout + p.stderr).strip().splitlines()
         print("tests: " + (lines[-1] if lines else "no output"))
@@ -249,7 +256,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
     entry = args.entry or files.project_config(Path(args.paths[0])).get("entry")
     if not entry:
-        print("no entry point: pass --entry module.function, or set \"entry\" in .jig/config.json", file=sys.stderr)
+        print('no entry point: pass --entry module.function, or set "entry" in .jig/config.json', file=sys.stderr)
         return 2
     if problem := entry_problem(project, entry):
         print(problem, file=sys.stderr)
@@ -289,8 +296,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("build", help="check, then transpile to a Python package")
     p.add_argument("paths", nargs="+")
     p.add_argument("-o", "--out", required=True)
-    p.add_argument("--entry", help="module.function to start; adds __main__.py so `python <out>` runs it "
-                                   "(default: \"entry\" in .jig/config.json)")
+    p.add_argument(
+        "--entry",
+        help="module.function to start; adds __main__.py so `python <out>` runs it "
+        '(default: "entry" in .jig/config.json)',
+    )
     p.set_defaults(func=cmd_build)
 
     p = sub.add_parser("interface", help="print the interface view (no bodies)")
@@ -343,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("run", help="check, build, and call an entry function")
     p.add_argument("paths", nargs="*", default=["."])
-    p.add_argument("--entry", help="module.function, e.g. shop.app.main (default: \"entry\" in .jig/config.json)")
+    p.add_argument("--entry", help='module.function, e.g. shop.app.main (default: "entry" in .jig/config.json)')
     p.add_argument("--port", type=int, default=8000, help="port for a web app entry")
     p.set_defaults(func=cmd_run)
 

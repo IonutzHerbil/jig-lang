@@ -32,9 +32,15 @@ class Decision:
 
 
 def parse_decision(path: Path) -> tuple[Decision | None, list[Diagnostic]]:
-    lines = [(n, raw.strip()) for n, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1) if raw.strip()]
+    lines = [
+        (n, raw.strip()) for n, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1) if raw.strip()
+    ]
     if not lines or not lines[0][1].startswith("decision "):
-        return None, [Diagnostic("DEC002", "a decision file must start with 'decision <id>'", str(path), lines[0][0] if lines else 1)]
+        return None, [
+            Diagnostic(
+                "DEC002", "a decision file must start with 'decision <id>'", str(path), lines[0][0] if lines else 1
+            )
+        ]
 
     dec = Decision(id=lines[0][1][len("decision ") :].strip())
     parts: dict[str, list[str]] = {}

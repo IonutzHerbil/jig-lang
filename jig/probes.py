@@ -24,7 +24,7 @@ from .checker import FuncInfo, ModuleInfo, Project
 PER_FUNCTION = 6
 TIMEOUT = 20
 
-RUNNER = r'''
+RUNNER = r"""
 import importlib, json, sys
 sys.path.insert(0, sys.argv[1])
 out, sys.stdout = sys.stdout, sys.stderr
@@ -39,7 +39,7 @@ for case in json.loads(sys.stdin.read()):
     except Exception as e:
         text = f"raises {type(e).__name__}: {e}"
     out.write(json.dumps({"i": case["i"], "result": text[:200]}) + "\n"); out.flush()
-'''
+"""
 
 EDGES = {"str": ['""', '" "'], "int": ["0", "-1"], "float": ["0.0", "-1.0"], "bytes": ['b""']}
 TYPICAL = {"str": '"hello world"', "int": "3", "float": "1.5", "bool": "True", "bytes": 'b"ab"'}
@@ -94,7 +94,9 @@ def _calls(project: Project, mod: ModuleInfo, fi: FuncInfo) -> list[str]:
     if args.kwonlyargs or args.vararg or args.kwarg or not params:
         return []
     types = [_type(project, mod, p.annotation) for p in params]
-    example = next((ex.call_ast for ex in fi.examples if isinstance(ex.call_ast, ast.Call) and not ex.call_ast.keywords), None)
+    example = next(
+        (ex.call_ast for ex in fi.examples if isinstance(ex.call_ast, ast.Call) and not ex.call_ast.keywords), None
+    )
     if example is not None and len(example.args) == len(params):
         baseline: list[str | None] = [ast.unparse(a) for a in example.args]
     else:
@@ -128,8 +130,12 @@ def run_probes(project: Project, build_dir: Path) -> list[tuple[str, str]]:
     env = {**os.environ, "PYTHONHASHSEED": "0"}
     try:
         proc = subprocess.run(
-            [sys.executable, "-c", RUNNER, str(build_dir)], input=json.dumps(cases),
-            capture_output=True, text=True, timeout=TIMEOUT, env=env,
+            [sys.executable, "-c", RUNNER, str(build_dir)],
+            input=json.dumps(cases),
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+            env=env,
         )
         stdout = proc.stdout
     except subprocess.TimeoutExpired as e:

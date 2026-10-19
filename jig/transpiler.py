@@ -162,7 +162,10 @@ def render_lib(man: Manifest, impl_file: Path) -> str:
     defined = {s.name for s in ast.parse(impl).body if isinstance(s, ast.FunctionDef)}
     out.append(impl)
     for fn in sorted(set(man.functions) - defined):
-        out += [f"def {fn}(*args, **kwargs):", f"    raise NotImplementedError('lib.{man.name}.{fn} has no body in {impl_file.name}')"]
+        out += [
+            f"def {fn}(*args, **kwargs):",
+            f"    raise NotImplementedError('lib.{man.name}.{fn} has no body in {impl_file.name}')",
+        ]
     return "\n".join(out) + "\n"
 
 
@@ -213,8 +216,10 @@ def write_launcher(project: Project, out_dir: Path, entry: str) -> Path:
     fi = mod.functions.get(name)
     takes_ctx = bool(fi and fi.node.args.args)
     target = out_dir / "__main__.py"
-    target.write_text(LAUNCHER.format(entry=entry, module=module, name=name,
-                                      args="jig_runtime.real_ctx()" if takes_ctx else ""), encoding="utf-8")
+    target.write_text(
+        LAUNCHER.format(entry=entry, module=module, name=name, args="jig_runtime.real_ctx()" if takes_ctx else ""),
+        encoding="utf-8",
+    )
     return target
 
 

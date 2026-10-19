@@ -29,3 +29,9 @@ jig = ["cards/*.md", "docs/*.md"]
 testpaths = ["tests"]
 norecursedirs = ["fixtures"]
 addopts = "-p no:cacheprovider"
+
+[tool.ruff]
+line-length = 120
+
+[tool.pylint.format]
+max-line-length = 120

@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 
 # Never part of a project's source: tooling, builds, environments, caches.
-SKIP_DIRS = frozenset({".git", "node_modules", "build", "dist", ".venv", "venv", "__pycache__", ".pytest_cache",
-                       ".jig", ".claude"})
+SKIP_DIRS = frozenset(
+    {".git", "node_modules", "build", "dist", ".venv", "venv", "__pycache__", ".pytest_cache", ".jig", ".claude"}
+)
 # Tests are checked by running them (jig gate), not as source.
 TEST_DIRS = frozenset({"tests", "test"})
 # A project's root holds at least one of these.

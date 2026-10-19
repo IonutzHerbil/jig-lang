@@ -22,7 +22,9 @@ def test_idiomatic_python_is_valid_jig_and_behaves_the_same():
 
 
 def test_examples_pass():
-    ok, diags, examples = check(*(REPO / "examples" / p for p in ("shop", "datastructures", "feature_showcase.jig", "test_types.jig")))
+    ok, diags, examples = check(
+        *(REPO / "examples" / p for p in ("shop", "datastructures", "feature_showcase.jig", "test_types.jig"))
+    )
     assert ok, diags
     assert examples["passed"] == examples["total"] > 30
 
@@ -44,8 +46,10 @@ def test_standard_library_and_record_mistakes():
     assert len(diags) == 5, diags  # the logger's attributes are not known, so they are not flagged
 
 
-@pytest.mark.skipif(not all(importlib.util.find_spec(m) for m in ("pandas", "requests", "pydantic")),
-                    reason="needs pandas, requests and pydantic installed")
+@pytest.mark.skipif(
+    not all(importlib.util.find_spec(m) for m in ("pandas", "requests", "pydantic")),
+    reason="needs pandas, requests and pydantic installed",
+)
 def test_third_party_packages_checked_against_the_real_package():
     ok, diags, _ = check(FIXTURES / "thirdparty", examples=False)
     messages = " | ".join(m for _, m in diags)
@@ -66,8 +70,10 @@ def test_type_flow_catches_dict_key_loops_and_leaked_errors(tmp_path):
     (tmp_path / "lib").mkdir()
     (tmp_path / "lib" / "cal.manifest").write_text(
         "lib cal\n\nenum CalError:\n    DOWN\n\ndeclare free(who: str) -> Result[int, CalError]\n    effects: net\n",
-        encoding="utf-8")
-    (tmp_path / "m.jig").write_text('''module m
+        encoding="utf-8",
+    )
+    (tmp_path / "m.jig").write_text(
+        """module m
 
 from lib.cal import free
 from std.result import Err, Ok, Result
@@ -89,13 +95,16 @@ def total() -> int:
 def minutes(who: str) -> Result[int, MyError]:
     n = free(who)?
     return Ok(n)
-''', encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
     ok, diags, _ = check(tmp_path, examples=False)
     assert ("R002" in codes(diags)) and ("T009" in codes(diags)), diags
 
 
 def test_types_are_checked_at_every_boundary(tmp_path):
-    (tmp_path / "m.jig").write_text('''module m
+    (tmp_path / "m.jig").write_text(
+        '''module m
 
 type Money = Money(int)
 type UserId = UserId(str)
@@ -131,7 +140,9 @@ def broken(c: Customer, o: Order) -> Money:
     visited.add(o.customer)
     n: int = label("x")
     return "done"
-''', encoding="utf-8")
+''',
+        encoding="utf-8",
+    )
     ok, diags, _ = check(tmp_path, examples=False)
     messages = [m for code, m in diags if code == "T010"]
     assert messages == [
@@ -182,18 +193,36 @@ def test_async_functions_methods_and_unawaited_calls(tmp_path):
     shutil.copy(FIXTURES / "async_bugs.jig.txt", tmp_path / "p" / "net" / "bugs.jig")
     ok, diags, _ = check(tmp_path / "p", examples=False)
     assert [c for c, _ in diags] == ["T012", "S001", "T012", "T012"], diags
-    result = subprocess.run([sys.executable, "-m", "jig", "run", str(FIXTURES / "asyncjobs"), "--entry", "net.jobs.main"],
-                            capture_output=True, text=True)
+    result = subprocess.run(
+        [sys.executable, "-m", "jig", "run", str(FIXTURES / "asyncjobs"), "--entry", "net.jobs.main"],
+        capture_output=True,
+        text=True,
+    )
     assert result.stdout.strip() == "8", result.stdout + result.stderr
 
 
 def test_effects_through_a_very_deep_call_chain(tmp_path):
     """Effects flow through 1500 nested calls (deeper than Python's recursion limit) without a crash."""
-    lines = ["module deep", "", "", "def f0(x: int) -> int:", '    """The bottom: it logs."""', "    print(x)", "    return x"]
+    lines = [
+        "module deep",
+        "",
+        "",
+        "def f0(x: int) -> int:",
+        '    """The bottom: it logs."""',
+        "    print(x)",
+        "    return x",
+    ]
     for i in range(1, 1500):
         lines += ["", "", f"def f{i}(x: int) -> int:", f'    """Calls f{i - 1}."""', f"    return f{i - 1}(x)"]
-    lines += ["", "", "def top(x: int) -> int:", '    """Says it is pure, but logs 1500 calls down."""', "    effects: none",
-              "    return f1499(x)", ""]
+    lines += [
+        "",
+        "",
+        "def top(x: int) -> int:",
+        '    """Says it is pure, but logs 1500 calls down."""',
+        "    effects: none",
+        "    return f1499(x)",
+        "",
+    ]
     (tmp_path / "deep.jig").write_text("\n".join(lines), encoding="utf-8")
     ok, diags, _ = check(tmp_path, examples=False)
     assert [c for c, _ in diags] == ["E002"], diags
@@ -202,8 +231,9 @@ def test_effects_through_a_very_deep_call_chain(tmp_path):
 
 def test_columns_count_characters_after_non_ascii_text(tmp_path):
     line = '    return "🚀 é" + r.nmae'
-    (tmp_path / "u.jig").write_text(f'module u\n\n\nrecord R:\n    name: str\n\n\ndef f(r: R) -> str:\n    """."""\n{line}\n',
-                                    encoding="utf-8")
+    (tmp_path / "u.jig").write_text(
+        f'module u\n\n\nrecord R:\n    name: str\n\n\ndef f(r: R) -> str:\n    """."""\n{line}\n', encoding="utf-8"
+    )
     _, summary = check_project([str(tmp_path)], run_ex=False)
     assert summary["diagnostics"][0]["location"]["col"] == line.index("r.nmae")  # not the UTF-8 byte offset
 
@@ -211,7 +241,8 @@ def test_columns_count_characters_after_non_ascii_text(tmp_path):
 def test_columns_after_question_marks(tmp_path):
     """Each `?` is rewritten to __jig_try__(...) before parsing; columns still point into the file as written."""
     line = '    return Ok(find(find(o)?.order)?.titel + "é🚀" + find(o)?.nmae)'
-    (tmp_path / "m.jig").write_text(f'''module m
+    (tmp_path / "m.jig").write_text(
+        f'''module m
 
 from std.result import Err, Ok, Result
 
@@ -229,7 +260,9 @@ def find(o: Order) -> Result[Order, str]:
 def f(o: Order) -> Result[str, str]:
     """."""
 {line}
-''', encoding="utf-8")
+''',
+        encoding="utf-8",
+    )
     _, summary = check_project([str(tmp_path)], run_ex=False)
     cols = sorted(d["location"]["col"] for d in summary["diagnostics"])
     assert cols == [line.index("find(find"), line.index("find(o)?.nmae")]

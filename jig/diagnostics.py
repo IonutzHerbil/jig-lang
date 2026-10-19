@@ -96,3 +96,8 @@ def replace_fix(bad: str, candidates: Iterable[str]) -> tuple[dict[str, Any] | N
     ratio = difflib.SequenceMatcher(None, bad, matches[0]).ratio()
     confidence = "high" if len(matches) == 1 or ratio >= 0.8 else "medium"
     return {"kind": "replace_token", "from": bad, "to": matches[0], "confidence": confidence}, matches
+
+
+def _listing(names: Iterable[str], limit: int = 25) -> str:
+    names = sorted(names)
+    return ", ".join(names[:limit]) + (f", ... ({len(names) - limit} more)" if len(names) > limit else "")

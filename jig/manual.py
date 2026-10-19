@@ -94,8 +94,11 @@ def error_codes() -> str:
 def sections(text: str) -> list[tuple[int, str, str]]:
     """(level, heading, text) for each ## or ### section, the text running until the next heading of any level."""
     parts = re.split(r"(?m)^(?=#{2,3} )", text)
-    return [(len(p) - len(p.lstrip("#")), p.splitlines()[0].lstrip("# ").strip(), p.rstrip())
-            for p in parts if p.startswith("##")]
+    return [
+        (len(p) - len(p.lstrip("#")), p.splitlines()[0].lstrip("# ").strip(), p.rstrip())
+        for p in parts
+        if p.startswith("##")
+    ]
 
 
 def section(heading: str) -> str | None:
@@ -193,6 +196,7 @@ def _style(text: str, st: Style) -> str:
         if m.group(2) is not None:
             return st.bold(m.group(2))
         return m.group(3)
+
     return INLINE.sub(one, text).replace(NBSP, " ")
 
 
@@ -289,7 +293,7 @@ def render(markdown: str, width: int | None = None, color: bool = False) -> str:
             i += 1
             continue
         bullet = re.match(r"(\s*)[-*] ", line)
-        text = line[bullet.end():] if bullet else line.strip()
+        text = line[bullet.end() :] if bullet else line.strip()
         i += 1
         while i < len(lines) and lines[i].strip() and not re.match(r"\s*([-*] |#|\||```)", lines[i]):
             text += " " + lines[i].strip()
@@ -310,6 +314,7 @@ def use_color() -> bool:
     if sys.platform == "win32":  # turn on ANSI escape handling in the Windows console
         try:
             import ctypes
+
             kernel32 = ctypes.windll.kernel32
             handle = kernel32.GetStdHandle(-11)
             mode = ctypes.c_uint32()

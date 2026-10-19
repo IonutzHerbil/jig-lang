@@ -10,10 +10,8 @@ Loads every module of a project, then checks:
 from __future__ import annotations
 
 import ast
-import contextlib
 import dataclasses
 import difflib
-import keyword
 import sys
 import functools
 import re
@@ -25,14 +23,24 @@ from typing import Any
 from . import jig_runtime as web
 from . import std
 from .decisions import Decision, load_decisions
-from .diagnostics import Diagnostic, replace_fix
+from .diagnostics import Diagnostic, _listing, replace_fix
 from .files import project_root
 from .fixer import eq_subject
 from .formatter import first_difference, format_source
 from .manifest import Manifest, load_manifests
+from .inference import TypeInference
 from .preprocess import Preprocessed, preprocess
-from .types import (BOOL, FLOAT, INSTANCES, INT, NAMED, NOT_CALLABLE, STR, element, list_of, method_return, optional,
-                    strip_optional, type_key, type_name)
+from .webcheck import RoutesOfProject, WebChecks
+from .types import (
+    INSTANCES,
+    NAMED,
+    NOT_CALLABLE,
+    STR,
+    element,
+    optional,
+    type_key,
+    type_name,
+)
 
 SNAKE = re.compile(r"[a-z_][a-z0-9_]*$")
 PASCAL = re.compile(r"[A-Z][A-Za-z0-9]*$")
@@ -135,7 +143,14 @@ class ModuleInfo:
         return self.pre.source.split("\n")
 
     def declared_names(self) -> set[str]:
-        return set(self.functions) | set(self.records) | set(self.enums) | set(self.newtypes) | set(self.constants) | self.classes
+        return (
+            set(self.functions)
+            | set(self.records)
+            | set(self.enums)
+            | set(self.newtypes)
+            | set(self.constants)
+            | self.classes
+        )
 
     def global_names(self) -> set[str]:
         return self.declared_names() | set(self.imports) | set(self.pymods)
@@ -268,11 +283,6 @@ def _returns_base(node: ast.AST | None) -> str | None:
     return base.id if isinstance(base, ast.Name) else None
 
 
-def _listing(names: Iterable[str], limit: int = 25) -> str:
-    names = sorted(names)
-    return ", ".join(names[:limit]) + (f", ... ({len(names) - limit} more)" if len(names) > limit else "")
-
-
 def _unpacks(node: ast.Call) -> bool:
     return any(isinstance(a, ast.Starred) for a in node.args) or any(kw.arg is None for kw in node.keywords)
 
@@ -292,21 +302,20 @@ def _char_col(mod: ModuleInfo, line: int, col: int) -> int:
 REAL_WORLD = frozenset({"fs", "net", "db", "env"})
 
 
-def _ref(e: ast.expr) -> str | None:
-    """`o.note` for a name or a chain of attributes on one; None for anything else (calls, subscripts)."""
-    parts = []
-    while isinstance(e, ast.Attribute):
-        parts.append(e.attr)
-        e = e.value
-    if not isinstance(e, ast.Name):
-        return None
-    parts.append(e.id)
-    return ".".join(reversed(parts))
-
-
-def _common(types: list[tuple | None]) -> tuple | None:
-    """The one type every item has, else unknown."""
-    return types[0] if types and all(t == types[0] for t in types) else None
+def _family(t: tuple) -> str | None:
+    """Which family of types t belongs to, for mismatch; None for things that are not compared."""
+    kind = t[0]
+    if kind in NAMED:
+        return "named"
+    return {
+        "prim": "prim",
+        "list": "seq",
+        "set": "seq",
+        "dict": "dict",
+        "tuple": "tuple",
+        "result": "result",
+        "none": "none",
+    }.get(kind)
 
 
 def _terminates(block: list[ast.stmt]) -> bool:
@@ -335,11 +344,15 @@ def _method_kind(node: ast.FunctionDef) -> str:
 
 
 # (file, text) -> what reading it gives; the AST is never changed after parsing, so checks can share it.
-_PARSED: dict[tuple[str, str], tuple[Preprocessed, list[Diagnostic], ast.Module | None, SyntaxError | None, int | None]] = {}
+_PARSED: dict[
+    tuple[str, str], tuple[Preprocessed, list[Diagnostic], ast.Module | None, SyntaxError | None, int | None]
+] = {}
 _PARSED_LIMIT = 4000
 
 
-def _parse(path: str, text: str) -> tuple[Preprocessed, list[Diagnostic], ast.Module | None, SyntaxError | None, int | None]:
+def _parse(
+    path: str, text: str
+) -> tuple[Preprocessed, list[Diagnostic], ast.Module | None, SyntaxError | None, int | None]:
     """(preprocessed, its diagnostics, tree, syntax error, first line that is not in canonical form)."""
     key = (path, text)
     if key not in _PARSED:
@@ -364,7 +377,7 @@ def _project_roots(files: list[Path]) -> list[Path]:
 # ---------------------------------------------------------------- project
 
 
-class Project:
+class Project(RoutesOfProject):
     def __init__(self) -> None:
         self.modules: dict[str, ModuleInfo] = {}
         self._inferred: dict[tuple[str, str], set[str]] = {}
@@ -420,8 +433,9 @@ class Project:
 
     # -- loading
 
-    def load(self, files: Iterable[Path], sources: dict[str, str] | None = None,
-             check_only: set[str] | None = None) -> None:
+    def load(
+        self, files: Iterable[Path], sources: dict[str, str] | None = None, check_only: set[str] | None = None
+    ) -> None:
         """Load and check files. sources overrides what is on disk (an editor's unsaved buffers), keyed by resolved
         path; with check_only, every file is read (so names resolve) but only those resolved paths are checked."""
         files = list(files)
@@ -441,26 +455,49 @@ class Project:
             mod = ModuleInfo(name=name, file=str(path), text=text, pre=pre, tree=tree)
             self.diags.extend(dataclasses.replace(d, module=name) for d in pdiags)
             if unformatted is not None:
-                self.diag("D001", "file is not in canonical form", mod, unformatted,
-                          fix={"kind": "format", "hint": "run `jig fmt`", "confidence": "high"})
+                self.diag(
+                    "D001",
+                    "file is not in canonical form",
+                    mod,
+                    unformatted,
+                    fix={"kind": "format", "hint": "run `jig fmt`", "confidence": "high"},
+                )
             if error is not None:
                 src_lines = text.split("\n")
                 line = src_lines[error.lineno - 1] if error.lineno and error.lineno <= len(src_lines) else ""
                 hint = ""
                 if kw := re.search(r"[(,]\s*(class|for|async|from|is|in|as)\s*=", line):
                     word = kw.group(1)
-                    hint = f"; '{word}' is a Python keyword: write {word}_=... (it renders as the HTML attribute {word})"
-                self.diag("S001", f"syntax error: {error.msg}{hint}", mod, error.lineno or 1, max((error.offset or 1) - 1, 0),
-                          col_in_chars=True)  # SyntaxError counts characters, unlike AST offsets
+                    hint = (
+                        f"; '{word}' is a Python keyword: write {word}_=... (it renders as the HTML attribute {word})"
+                    )
+                self.diag(
+                    "S001",
+                    f"syntax error: {error.msg}{hint}",
+                    mod,
+                    error.lineno or 1,
+                    max((error.offset or 1) - 1, 0),
+                    col_in_chars=True,
+                )  # SyntaxError counts characters, unlike AST offsets
 
             if name in self.modules:
-                self.diag("S007", f"module '{name}' is defined twice (also in {self.modules[name].file})", mod, pre.module_line)
+                self.diag(
+                    "S007",
+                    f"module '{name}' is defined twice (also in {self.modules[name].file})",
+                    mod,
+                    pre.module_line,
+                )
                 continue
             top = name.split(".")[0]
             if top in sys.stdlib_module_names:
-                self.diag("S009", f"'{top}' is a Python standard-library module: the built program would import that "
-                          f"instead of yours; rename the package (e.g. '{top}_app')", mod, pre.module_line or 1,
-                          fix={"kind": "replace_token", "from": top, "to": f"{top}_app", "confidence": "medium"})
+                self.diag(
+                    "S009",
+                    f"'{top}' is a Python standard-library module: the built program would import that "
+                    f"instead of yours; rename the package (e.g. '{top}_app')",
+                    mod,
+                    pre.module_line or 1,
+                    fix={"kind": "replace_token", "from": top, "to": f"{top}_app", "confidence": "medium"},
+                )
             self.modules[name] = mod
 
         for mod in self.modules.values():
@@ -593,108 +630,40 @@ class Project:
         return None
 
     def mismatch(self, want: tuple | None, got: tuple | None) -> bool:
-        """True when a value of type got can never be what want asks for. Unknown on either side is never a mismatch."""
+        """True when a value of type got can never be what want asks for. Unknown on either side is never a mismatch.
+
+        Types of different families never match (a plain value, a named type, a sequence, a dict, a tuple, a Result,
+        None). Within a family the contents are compared. Allowed: a newtype where its base is asked, an int where
+        a float is, a list for a set and the other way round, a subclass for its base class."""
         if not want or not got:
             return False
-        w, g = want[0], got[0]
-        if g == "optional":  # it may be None: fine only where None is allowed
-            return w != "optional" or self.mismatch(want[1], got[1])
-        if w == "optional":
-            return g != "none" and self.mismatch(want[1], got)
-        if w == "tuple" or g == "tuple":
-            if w == g == "tuple":
-                return len(want[1]) != len(got[1]) or any(self.mismatch(a, b) for a, b in zip(want[1], got[1]))
-            other = g if w == "tuple" else w
-            return other in NAMED or other in ("prim", "none", "result", "dict")
-        if w == "prim":
-            if g == "prim":
-                return not (want[1] == got[1] or (want[1] == "float" and got[1] in ("int", "bool"))
-                            or (want[1] == "int" and got[1] == "bool"))
-            if g in ("newtype", "libnewtype"):  # a newtype is its base value, so it may go where the base is asked
-                base = got[1].newtypes[got[2]]
-                return self.mismatch(want, ("prim", base))
-            return g in NAMED or g in ("list", "set", "dict", "result", "none")
-        if w == "obj" and g == "obj":
-            return not self.is_subclass(got[1], got[2], want)
-        if w in NAMED:
-            return got[0] != w or type_key(got) != type_key(want) if g in NAMED or g in ("prim", "list", "set", "dict", "result", "none") else False
-        if w in ("list", "set", "dict"):
-            seqs = ("list", "set")
-            if not (g == w or (w in seqs and g in seqs)):
-                return g in NAMED or g in ("prim", "result", "none", "list", "set", "dict")
-            return any(self.mismatch(a, b) for a, b in zip(want[1:], got[1:]))
-        if w == "result":
-            if g != "result":
-                return g in NAMED or g in ("prim", "list", "set", "dict", "none")
+        if got[0] == "optional":  # it may be None: fine only where None is allowed
+            return want[0] != "optional" or self.mismatch(want[1], got[1])
+        if want[0] == "optional":
+            return got[0] != "none" and self.mismatch(want[1], got)
+        if want[0] == "prim" and got[0] in ("newtype", "libnewtype"):
+            got = ("prim", got[1].newtypes[got[2]])  # a newtype is its base value
+        family = _family(want)
+        if family is None or _family(got) is None or {family, _family(got)} == {"tuple", "seq"}:
+            return False  # not something compared (a module, a class itself), or a tuple for a sequence
+        if family != _family(got):
+            return True
+        if family == "prim":
+            widening = {("float", "int"), ("float", "bool"), ("int", "bool")}
+            return want[1] != got[1] and (want[1], got[1]) not in widening
+        if family == "named":
+            if want[0] == got[0] == "obj":
+                return not self.is_subclass(got[1], got[2], want)
+            return want[0] != got[0] or type_key(got) != type_key(want)
+        if family == "tuple":
+            return len(want[1]) != len(got[1]) or any(self.mismatch(a, b) for a, b in zip(want[1], got[1]))
+        if family == "result":
             if want[1] != got[1]:
                 return True
             if len(want) > 2 and len(got) > 2 and self.mismatch(want[2], got[2]):
                 return True
             return len(want) > 3 and len(got) > 3 and bool(want[3] and got[3]) and want[3] != got[3]
-        return False
-
-    def _collect_routes(self) -> list[tuple[str, str, Any, ModuleInfo, FuncInfo]]:
-        """Every `@app.get("/path")` handler in the project, checked against its route."""
-        routes = []
-        seen: dict[tuple[str, str], tuple[ModuleInfo, int]] = {}
-        for mod in self.modules.values():
-            for fi in mod.functions.values():
-                for d in fi.node.decorator_list:
-                    if not (isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute) and d.func.attr in std.HTTP_METHODS
-                            and isinstance(d.func.value, ast.Name) and d.args and isinstance(d.args[0], ast.Constant)
-                            and isinstance(d.args[0].value, str)):
-                        continue
-                    r = self.resolve(mod, d.func.value.id)
-                    if not (r and r[0] == "constant" and self.constant_type(r[1], r[2]) == ("stdtype", "std.web", "App")):
-                        continue
-                    method, pattern = d.func.attr.upper(), d.args[0].value
-                    key = (method, pattern)
-                    if key in seen:
-                        first = seen[key]
-                        self.diag("S007", f"route {method} {pattern} is defined twice (also in {first[0].name} line {first[1]})",
-                                  mod, d.lineno, function=fi.name)
-                        continue
-                    seen[key] = (mod, d.lineno)
-                    if not pattern.startswith("/"):
-                        self.diag("S001", f"a route starts with '/': got '{pattern}'", mod, d.lineno, function=fi.name)
-                    params = re.findall(r"\{(\w+)\}", pattern)
-                    for name in params:
-                        if name not in fi.params and not fi.varkw:
-                            self.diag("T006", f"route '{pattern}' passes '{name}', but '{fi.name}' has no parameter '{name}'",
-                                      mod, d.lineno, function=fi.name,
-                                      fix={"kind": "review", "hint": f"add a parameter `{name}: str` (or int) to {fi.name}"})
-                    routes.append((method, pattern, web._route_regex(pattern), mod, fi))
-        return routes
-
-    def route_for(self, method: str, path: str) -> bool:
-        """Whether some route (or the static folder) answers method + path."""
-        if method == "GET" and path.startswith("/static/"):
-            return True
-        return self.handler_for(method, path) is not None
-
-    def handler_for(self, method: str, path: str) -> tuple[str, ModuleInfo, FuncInfo] | None:
-        """(route pattern, module, handler) of the route answering method + path."""
-        for m, pattern, regex, mod, fi in self.routes:
-            if m == method and regex.match(path):
-                return pattern, mod, fi
-        return None
-
-    def form_fields(self, mod: ModuleInfo, pattern: str, fi: FuncInfo) -> tuple[list[str], list[str]]:
-        """(required, optional) names a request to this handler must or may carry as form or query fields: its
-        parameters that are not route parameters and not the request itself."""
-        route_params = set(re.findall(r"\{(\w+)\}", pattern))
-        a = fi.node.args
-        positional = a.posonlyargs + a.args
-        defaulted = {x.arg for x in positional[len(positional) - len(a.defaults):]} if a.defaults else set()
-        defaulted |= {x.arg for x, d in zip(a.kwonlyargs, a.kw_defaults) if d is not None}
-        required, optional = [], []
-        for arg in positional + a.kwonlyargs:
-            if arg.arg in route_params:
-                continue
-            if self.ann_type(mod, arg.annotation) == ("stdtype", "std.web", "Request"):
-                continue
-            (optional if arg.arg in defaulted else required).append(arg.arg)
-        return required, optional
+        return any(self.mismatch(a, b) for a, b in zip(want[1:], got[1:]))  # sequences and dicts: their contents
 
     def constant_type(self, mod: ModuleInfo, name: str) -> tuple | None:
         """A module constant's type: its annotation, or else what its value is (`ALICE = Customer(...)`)."""
@@ -705,7 +674,9 @@ class Project:
         if key not in self._constant_types:
             self._constant_types[key] = None  # a constant defined through itself stays unknown
             value = node.value
-            self._constant_types[key] = BodyChecker(self, mod, None, set(), {}, silent=True).type_of(value) if value else None
+            self._constant_types[key] = (
+                BodyChecker(self, mod, None, set(), {}, silent=True).type_of(value) if value else None
+            )
         return self._constant_types[key]
 
     def effects_of(self, mod: ModuleInfo, fi: FuncInfo) -> set[str]:
@@ -720,8 +691,14 @@ class Project:
         manifest do not count: in examples and probes they are their fakes. What `jig probe` must never run."""
         return self._through_calls(mod, fi, self._real, lambda c: set(c.real_world), lambda f: True)
 
-    def _through_calls(self, mod: ModuleInfo, fi: FuncInfo, known: dict[tuple[str, str], set[str]],
-                       direct: Callable[[BodyChecker], set[str]], follow: Callable[[FuncInfo], bool]) -> set[str]:
+    def _through_calls(
+        self,
+        mod: ModuleInfo,
+        fi: FuncInfo,
+        known: dict[tuple[str, str], set[str]],
+        direct: Callable[[BodyChecker], set[str]],
+        follow: Callable[[FuncInfo], bool],
+    ) -> set[str]:
         """What fi has directly or through any function it calls: each function reachable from fi (through calls
         `follow` accepts) is walked once for its direct set and its calls, then the sets flow along the calls until
         nothing changes. A worklist, not recursion, so call chains of any depth and cycles are fine."""
@@ -735,7 +712,7 @@ class Project:
             k = (m.name, f.qualname)
             if k in graph or k in known:
                 continue
-            checker = self._walked.get(k) or self._body_checker(m, f, silent=True, collect_callees=True)[0]
+            checker = self._walked.get(k) or self.body_checker(m, f, silent=True, collect_callees=True)[0]
             calls = [(cm, cf) for cm, cf, *_ in (checker.callees or {}).values()]
             graph[k] = (direct(checker), [(cm.name, cf.qualname) for cm, cf in calls])
             pending += [(cm, cf) for cm, cf in calls if follow(cf)]
@@ -757,7 +734,9 @@ class Project:
 
         Examples are test data: they may use any such name without the module importing it."""
         sources = [f"from {m} import {name}" for m, exports in std.STD.items() if name in exports]
-        sources += [f"from {o.name} import {name}" for o in self.modules.values() if o is not mod and name in o.declared_names()]
+        sources += [
+            f"from {o.name} import {name}" for o in self.modules.values() if o is not mod and name in o.declared_names()
+        ]
         sources += [f"from lib.{k} import {name}" for k, man in self.manifests.items() if name in man.exports]
         return sources[0] if len(sources) == 1 else None
 
@@ -778,7 +757,9 @@ class Project:
 
         def claim(name: str, node: ast.AST) -> None:
             if name in seen:
-                self.diag("S007", f"'{name}' is defined twice (first at line {seen[name]})", mod, node.lineno, node.col_offset)
+                self.diag(
+                    "S007", f"'{name}' is defined twice (first at line {seen[name]})", mod, node.lineno, node.col_offset
+                )
             else:
                 seen[name] = node.lineno
 
@@ -834,7 +815,9 @@ class Project:
                 base = mod.pre.newtypes[name][0]
                 mod.newtypes[name] = base
                 if base not in std.PRIMITIVES:
-                    self.diag("T001", f"newtype base must be one of {sorted(std.PRIMITIVES)}, got '{base}'", mod, stmt.lineno)
+                    self.diag(
+                        "T001", f"newtype base must be one of {sorted(std.PRIMITIVES)}, got '{base}'", mod, stmt.lineno
+                    )
                 for dec in self.decisions.values():
                     want = dec.newtypes.get(name)
                     if want and want != base:
@@ -844,7 +827,12 @@ class Project:
                             mod,
                             stmt.lineno,
                             context={"decision": dec.id, "rationale": dec.text.get("rationale", "")},
-                            fix={"kind": "replace_token", "from": f"{name}({base})", "to": f"{name}({want})", "confidence": "high"},
+                            fix={
+                                "kind": "replace_token",
+                                "from": f"{name}({base})",
+                                "to": f"{name}({want})",
+                                "confidence": "high",
+                            },
                         )
             elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
                 claim(stmt.target.id, stmt)
@@ -896,13 +884,23 @@ class Project:
             fields[s.target.id] = (s.annotation, s.value is not None)
             value = s.value
             mutable = isinstance(value, (ast.List, ast.Dict, ast.Set)) or (
-                isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id in std.MUTABLE_CALLS)
+                isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id in std.MUTABLE_CALLS
+            )
             if mutable and not record:  # a record copies its list/dict/set defaults; a dataclass refuses them at import
                 kind = value.func.id if isinstance(value, ast.Call) else type(value).__name__.lower()
-                self.diag("F013", f"dataclass field '{s.target.id}' has a mutable default, which Python refuses at "
-                          f"import; write field(default_factory={kind})", mod, s.lineno,
-                          fix={"kind": "replace_token", "from": ast.unparse(value), "to": f"field(default_factory={kind})",
-                               "confidence": "high"})
+                self.diag(
+                    "F013",
+                    f"dataclass field '{s.target.id}' has a mutable default, which Python refuses at "
+                    f"import; write field(default_factory={kind})",
+                    mod,
+                    s.lineno,
+                    fix={
+                        "kind": "replace_token",
+                        "from": ast.unparse(value),
+                        "to": f"field(default_factory={kind})",
+                        "confidence": "high",
+                    },
+                )
         if record and not fields:
             self.diag("S006", f"record '{node.name}' has no fields", mod, node.lineno)
         mod.records[node.name] = fields
@@ -917,7 +915,12 @@ class Project:
                 continue
             if jig_enum and isinstance(s, ast.Expr) and isinstance(s.value, ast.Name):
                 variants.append(s.value.id)
-            elif not jig_enum and isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name):
+            elif (
+                not jig_enum
+                and isinstance(s, ast.Assign)
+                and len(s.targets) == 1
+                and isinstance(s.targets[0], ast.Name)
+            ):
                 variants.append(s.targets[0].id)
             else:
                 form = "variant names, one per line," if jig_enum else "variants (NAME = value)"
@@ -994,7 +997,9 @@ class Project:
             if any(x is ci for _, x in chain):
                 continue
             chain.append((m, ci))
-            if ci.node.keywords or any(self._decorator_name(m, d) != "dataclasses.dataclass" for d in ci.node.decorator_list):
+            if ci.node.keywords or any(
+                self._decorator_name(m, d) != "dataclasses.dataclass" for d in ci.node.decorator_list
+            ):
                 open_ = True  # a metaclass or a decorator may add members
             if any(f.name == "__getattr__" for f in ci.methods.values()):
                 open_ = True
@@ -1038,8 +1043,14 @@ class Project:
         params = [x.arg for x in positional + a.kwonlyargs]
         defaulted = {x.arg for x in positional[len(positional) - len(a.defaults) :]} if a.defaults else set()
         defaulted |= {x.arg for x, d in zip(a.kwonlyargs, a.kw_defaults) if d is not None}
-        fi = FuncInfo(name=node.name, node=node, params=params, required=set(params) - defaulted,
-                      varargs=a.vararg is not None, varkw=a.kwarg is not None)
+        fi = FuncInfo(
+            name=node.name,
+            node=node,
+            params=params,
+            required=set(params) - defaulted,
+            varargs=a.vararg is not None,
+            varkw=a.kwarg is not None,
+        )
         if node.body and _is_docstring(node.body[0]):
             fi.docstring = node.body[0].value.value  # type: ignore[attr-defined]
 
@@ -1120,7 +1131,9 @@ class Project:
             self.diag("S001", f"invalid expected value: {e.msg}", mod, line, function=fn)
             return None
         ast.increment_lineno(exp_ast, line - 1)
-        return Example(line=line, call=call_text, call_ast=call_ast, kind="value", expected=expected, expected_ast=exp_ast)
+        return Example(
+            line=line, call=call_text, call_ast=call_ast, kind="value", expected=expected, expected_ast=exp_ast
+        )
 
     # -- checking
 
@@ -1132,83 +1145,111 @@ class Project:
             return
         fix, cands = replace_fix(m, [*std.STD, *std.STDLIB, *self.modules, *(f"lib.{k}" for k in self.manifests)])
         known = [*self.modules, *(f"lib.{k}" for k in self.manifests)]
-        self.diag("R003", f"unknown module '{m}'; project modules and libraries: {_listing(known)}", mod, line, context={"candidates": cands}, fix=fix)
+        self.diag(
+            "R003",
+            f"unknown module '{m}'; project modules and libraries: {_listing(known)}",
+            mod,
+            line,
+            context={"candidates": cands},
+            fix=fix,
+        )
 
     def _check_module(self, mod: ModuleInfo) -> None:
+        self._check_imports(mod)
+        self._check_naming(mod)
+        self._check_declarations(mod)
+        for ci in mod.classinfo.values():
+            for fi in ci.methods.values():
+                self._check_function(mod, fi)
+        for fi in mod.functions.values():
+            self._check_function(mod, fi)
+
+    def _exports(self, module: str) -> list[str] | None:
+        """What `from module import ...` may name: a project module's declarations, a manifest's exports, std, or the
+        real module of the standard library or an installed package. None for a module that does not exist."""
+        if module in self.modules:
+            return sorted(self.modules[module].declared_names())
+        if module in std.STD:
+            return sorted(std.STD[module])
+        if module.startswith("lib.") and module[4:] in self.manifests:
+            return sorted(self.manifests[module[4:]].exports)
+        real = stdlib_module(module)
+        return public_names(real) if real is not None else None
+
+    def _check_imports(self, mod: ModuleInfo) -> None:
         for m, line in mod.pymods.values():
             if stdlib_module(m) is None and m not in self.modules:
                 self._unknown_module(mod, m, line)
-
         for m, n, line in mod.imports.values():
-            if m not in self.modules and (pymod := stdlib_module(m)) is not None:
-                if not hasattr(pymod, n):
-                    fix, cands = replace_fix(n, public_names(pymod))
-                    self.diag("R003", f"'{m}' has no export '{n}'", mod, line, context={"candidates": cands}, fix=fix)
-            elif m in std.STD:
-                if n not in std.STD[m]:
-                    fix, cands = replace_fix(n, std.STD[m])
-                    self.diag("R003", f"'{m}' has no export '{n}'; it exports: {_listing(std.STD[m])}", mod, line, context={"exports": sorted(std.STD[m]), "candidates": cands}, fix=fix)
-            elif m.startswith("lib.") and m[4:] in self.manifests:
-                exports = self.manifests[m[4:]].exports
-                if n not in exports:
-                    fix, cands = replace_fix(n, exports)
-                    self.diag("R003", f"'{m}' has no export '{n}'; it exports: {_listing(exports)}", mod, line, context={"exports": sorted(exports), "candidates": cands}, fix=fix)
-            elif m in self.modules:
-                target = self.modules[m]
-                if n in target.imports:
-                    origin = target.imports[n][0]
-                    self.diag(
-                        "F006",
-                        f"'{n}' is re-exported by '{m}'; import it from '{origin}'",
-                        mod,
-                        line,
-                        fix={"kind": "replace_token", "from": m, "to": origin, "confidence": "high"},
-                    )
-                elif n not in target.declared_names():
-                    fix, cands = replace_fix(n, target.declared_names())
-                    self.diag("R003", f"module '{m}' has no declaration '{n}'; it declares: {_listing(target.declared_names())}", mod, line, context={"declarations": sorted(target.declared_names()), "candidates": cands}, fix=fix)
-            else:
+            exports = self._exports(m)
+            if exports is None:
                 self._unknown_module(mod, m, line)
+            elif m in self.modules and n in self.modules[m].imports:
+                origin = self.modules[m].imports[n][0]
+                self.diag(
+                    "F006",
+                    f"'{n}' is re-exported by '{m}'; import it from '{origin}'",
+                    mod,
+                    line,
+                    fix={"kind": "replace_token", "from": m, "to": origin, "confidence": "high"},
+                )
+            elif n not in exports and not self._real_module_has(m, n):
+                fix, cands = replace_fix(n, exports)
+                listed = (
+                    f"; it exports: {_listing(exports)}" if m in self.modules or m.startswith(("std.", "lib.")) else ""
+                )
+                self.diag(
+                    "R003", f"'{m}' has no export '{n}'{listed}", mod, line, context={"candidates": cands}, fix=fix
+                )
 
-        for name in list(mod.records) + list(mod.enums) + list(mod.newtypes):
-            if not PASCAL.match(name):
-                self._naming(mod, name, "types use PascalCase")
-        for fields in mod.records.values():
-            for fname in fields:
-                if not SNAKE.match(fname):
-                    self._naming(mod, fname, "record fields use snake_case")
-            checker = BodyChecker(self, mod, None, set(), {})
-            for ann, _ in fields.values():
-                checker.visit(ann)
-        for variants in mod.enums.values():
-            for v in variants:
-                if not UPPER.match(v):
-                    self._naming(mod, v, "enum variants use UPPER_CASE")
+    def _real_module_has(self, module: str, name: str) -> bool:
+        """A real module (standard library, installed package) may export more than its public names (`_exit`)."""
+        real = stdlib_module(module) if module not in self.modules else None
+        return real is not None and hasattr(real, name)
+
+    def _check_naming(self, mod: ModuleInfo) -> None:
+        rules = [
+            (
+                list(mod.records)
+                + list(mod.enums)
+                + list(mod.newtypes)
+                + [c.name for c in mod.classinfo.values() if c.kind == "class"],
+                PASCAL,
+                "types use PascalCase",
+            ),
+            ([f for fields in mod.records.values() for f in fields], SNAKE, "record fields use snake_case"),
+            ([v for variants in mod.enums.values() for v in variants], UPPER, "enum variants use UPPER_CASE"),
+        ]
+        for names, pattern, rule in rules:
+            for name in names:
+                if not pattern.match(name):
+                    self._naming(mod, name, rule)
         for name, node in mod.constants.items():
             if not UPPER.match(name) and self.constant_type(mod, name) != ("stdtype", "std.web", "App"):
                 self._naming(mod, name, "constants use UPPER_CASE", node.lineno)
-            checker = BodyChecker(self, mod, None, set(), {})
-            if isinstance(node, ast.AnnAssign):
-                checker.visit(node.annotation)
-            if node.value is not None:
-                checker.visit(node.value)
-            if checker.used_effects:
-                self.diag("E004", f"constant '{name}' must be pure; it uses {sorted(checker.used_effects)}", mod, node.lineno)
 
+    def _check_declarations(self, mod: ModuleInfo) -> None:
+        """What module-level declarations refer to: field annotations, constant values (which must be pure), class
+        bases, decorators and class-level assignments."""
+        checker = BodyChecker(self, mod, None, set(), {})
+        for fields in mod.records.values():
+            for ann, _ in fields.values():
+                checker.visit(ann)
         for ci in mod.classinfo.values():
-            if ci.kind == "class" and not PASCAL.match(ci.name):
-                self._naming(mod, ci.name, "types use PascalCase")
-            checker = BodyChecker(self, mod, None, set(), {})
             for b in ci.node.bases + [k.value for k in ci.node.keywords] + ci.node.decorator_list:
                 checker.visit(b)
             for stmt in ci.node.body:
                 if isinstance(stmt, (ast.AnnAssign, ast.Assign)) and ci.kind != "enum":
                     checker.visit(stmt)
-            for fi in ci.methods.values():
-                self._check_function(mod, fi)
-
-        for fi in mod.functions.values():
-            self._check_function(mod, fi)
+        for name, node in mod.constants.items():
+            constant = BodyChecker(self, mod, None, set(), {})
+            for part in (getattr(node, "annotation", None), node.value):
+                if part is not None:
+                    constant.visit(part)
+            if constant.used_effects:
+                self.diag(
+                    "E004", f"constant '{name}' must be pure; it uses {sorted(constant.used_effects)}", mod, node.lineno
+                )
 
     def _check_declared_effects(self, mod: ModuleInfo, fi: FuncInfo, checker: BodyChecker) -> None:
         """Declaring effects is optional: undeclared ones are inferred. A declaration is an assertion, checked once
@@ -1225,14 +1266,29 @@ class Project:
             line, col, via = min(sites, key=lambda site: (site[0], site[1]))
             fix = {"kind": "add_effect", "effect": eff, "confidence": "high"}
             if via:
-                self.diag("E002", f"uses '{via}', which has effect '{eff}', but '{fi.qualname}' does not declare it",
-                          mod, line, col, function=fi.qualname, fix=fix)
+                self.diag(
+                    "E002",
+                    f"uses '{via}', which has effect '{eff}', but '{fi.qualname}' does not declare it",
+                    mod,
+                    line,
+                    col,
+                    function=fi.qualname,
+                    fix=fix,
+                )
             else:
-                self.diag("E001", f"uses effect '{eff}' without declaring it", mod, line, col, function=fi.qualname, fix=fix)
+                self.diag(
+                    "E001", f"uses effect '{eff}' without declaring it", mod, line, col, function=fi.qualname, fix=fix
+                )
         for d in sorted(fi.effects):
             if not any(std.covers(d, e) for e in used):
-                self.diag("W001", f"declares effect '{d}' but never uses it", mod, fi.node.lineno,
-                          function=fi.qualname, severity="warning")
+                self.diag(
+                    "W001",
+                    f"declares effect '{d}' but never uses it",
+                    mod,
+                    fi.node.lineno,
+                    function=fi.qualname,
+                    severity="warning",
+                )
 
     def _naming(self, mod: ModuleInfo, name: str, rule: str, line: int | None = None) -> None:
         self.diag("S003", f"'{name}': {rule}", mod, line or mod.pre.module_line)
@@ -1253,7 +1309,14 @@ class Project:
             if k < fi.bound:
                 continue  # self / cls
             if arg.annotation is None:
-                err("T004", f"parameter '{arg.arg}' has no type, so calls to '{fn}' are checked less", arg.lineno, arg.col_offset, severity="warning", fix={"kind": "insert_annotation", "hint": f"{arg.arg}: <type>"})
+                err(
+                    "T004",
+                    f"parameter '{arg.arg}' has no type, so calls to '{fn}' are checked less",
+                    arg.lineno,
+                    arg.col_offset,
+                    severity="warning",
+                    fix={"kind": "insert_annotation", "hint": f"{arg.arg}: <type>"},
+                )
             if not SNAKE.match(arg.arg):
                 err("S003", f"'{arg.arg}': parameters use snake_case", arg.lineno, arg.col_offset)
             if arg.arg in RESERVED:
@@ -1263,19 +1326,32 @@ class Project:
                 isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id in std.MUTABLE_CALLS
             )
             if mutable:
-                err("F013", "mutable default values are not allowed: they are shared between calls", d.lineno, d.col_offset)
+                err(
+                    "F013",
+                    "mutable default values are not allowed: they are shared between calls",
+                    d.lineno,
+                    d.col_offset,
+                )
         if node.returns is None and not (fi.cls and fi.name.startswith("__")):
-            err("T004", f"'{fn}' has no return type, so its callers are checked less", node.lineno, severity="warning", fix={"kind": "insert_annotation", "hint": "-> <type>"})
+            err(
+                "T004",
+                f"'{fn}' has no return type, so its callers are checked less",
+                node.lineno,
+                severity="warning",
+                fix={"kind": "insert_annotation", "hint": "-> <type>"},
+            )
 
-        checker, var_types = self._body_checker(mod, fi, collect_callees=True)
+        checker, var_types = self.body_checker(mod, fi, collect_callees=True)
         self._walked[(mod.name, fi.qualname)] = checker  # effects_of reads its calls instead of walking again
         self._effect_checks.append((mod, fi, checker))
         for arg in all_args:
             if var_types.get(arg.arg) == ("ctx",) and arg.arg not in checker.names_used:
                 err(
-                    "T008", f"parameter '{arg.arg}: Ctx' is never used: remove it, so callers pass only what was asked for; "
+                    "T008",
+                    f"parameter '{arg.arg}: Ctx' is never used: remove it, so callers pass only what was asked for; "
                     "take a Ctx only for time, randomness or logging",
-                    arg.lineno, arg.col_offset,
+                    arg.lineno,
+                    arg.col_offset,
                 )
         for clause in fi.requires:
             self._check_contract(mod, fi, clause, var_types, with_result=False)
@@ -1285,9 +1361,12 @@ class Project:
                     f"'{fn}' returns Result, so bad input is an Err, not a requires: a requires failure crashes the "
                     "caller instead of returning your error",
                     clause.line,
-                    fix={"kind": "review", "hint": f"delete `requires: {clause.text}` and start the body with "
-                         f"`if not ({clause.text}): return Err(...)`, using the error the request names for that input; "
-                         "if a function you call already returns that Err, just propagate it with `?`"},
+                    fix={
+                        "kind": "review",
+                        "hint": f"delete `requires: {clause.text}` and start the body with "
+                        f"`if not ({clause.text}): return Err(...)`, using the error the request names for that input; "
+                        "if a function you call already returns that Err, just propagate it with `?`",
+                    },
                 )
         for clause in fi.ensures:
             self._check_contract(mod, fi, clause, var_types, with_result=True)
@@ -1297,8 +1376,14 @@ class Project:
             if ex.expected_ast is not None:
                 ec.visit(ex.expected_ast)
 
-    def _body_checker(self, mod: ModuleInfo, fi: FuncInfo, silent: bool = False,
-                      until_line: int | None = None, collect_callees: bool = False) -> tuple[BodyChecker, dict[str, tuple]]:
+    def body_checker(
+        self,
+        mod: ModuleInfo,
+        fi: FuncInfo,
+        silent: bool = False,
+        until_line: int | None = None,
+        collect_callees: bool = False,
+    ) -> tuple[BodyChecker, dict[str, tuple]]:
         """Walk a function's signature and body (up to until_line, for an editor asking about a position). Returns
         the checker, which then knows the effects used and the types of the locals, and the parameters' types.
         With collect_callees the walk records the project functions called, instead of asking for their effects:
@@ -1335,22 +1420,36 @@ class Project:
             checker.visit(stmt)
         return checker, var_types
 
-    def _check_contract(self, mod: ModuleInfo, fi: FuncInfo, clause: Clause, var_types: dict[str, tuple], with_result: bool) -> None:
+    def _check_contract(
+        self, mod: ModuleInfo, fi: FuncInfo, clause: Clause, var_types: dict[str, tuple], with_result: bool
+    ) -> None:
         names = set(fi.params) | ({"result"} if with_result else set())
         checker = BodyChecker(self, mod, fi, names, var_types)
         checker.visit(clause.expr)
         if checker.used_effects:
-            self.diag("E004", f"contracts must be pure; this one uses {sorted(checker.used_effects)}", mod, clause.line, function=fi.name)
+            self.diag(
+                "E004",
+                f"contracts must be pure; this one uses {sorted(checker.used_effects)}",
+                mod,
+                clause.line,
+                function=fi.name,
+            )
 
 
 # ---------------------------------------------------------------- body checker
 
 
-class BodyChecker(ast.NodeVisitor):
+class BodyChecker(TypeInference, WebChecks, ast.NodeVisitor):
     """Checks one function body, contract, example, or constant."""
 
     def __init__(
-        self, project: Project, mod: ModuleInfo, func: FuncInfo | None, local_names: set[str], var_types: dict[str, tuple], silent: bool = False,
+        self,
+        project: Project,
+        mod: ModuleInfo,
+        func: FuncInfo | None,
+        local_names: set[str],
+        var_types: dict[str, tuple],
+        silent: bool = False,
         example_of: FuncInfo | None = None,
     ) -> None:
         self.p = project
@@ -1375,7 +1474,16 @@ class BodyChecker(ast.NodeVisitor):
 
     # -- helpers
 
-    def err(self, code: str, msg: str, node: ast.AST, *, severity: str = "error", context: dict | None = None, fix: dict | None = None) -> None:
+    def err(
+        self,
+        code: str,
+        msg: str,
+        node: ast.AST,
+        *,
+        severity: str = "error",
+        context: dict | None = None,
+        fix: dict | None = None,
+    ) -> None:
         if self.silent:
             return
         self.p.diag(
@@ -1396,362 +1504,7 @@ class BodyChecker(ast.NodeVisitor):
         if real and effect.split(".")[0] in REAL_WORLD:
             self.real_world.add(effect)
 
-    def type_of(self, e: ast.expr) -> tuple | None:
-        """The type of an expression, or None when it cannot be known."""
-        rule = getattr(self, "_type_" + type(e).__name__, None)
-        t = rule(e) if rule else None
-        if t and t[0] == "optional" and self.narrowed and _ref(e) in self.narrowed:
-            return t[1]
-        return t
-
-    def _type_Await(self, e: ast.Await) -> tuple | None:
-        return self.type_of(e.value)
-
-    def _type_Constant(self, e: ast.Constant) -> tuple | None:
-        if e.value is None:
-            return ("none",)
-        kind = type(e.value).__name__
-        return ("prim", kind) if kind in std.PRIMITIVES else None
-
-    def _type_JoinedStr(self, e: ast.JoinedStr) -> tuple | None:
-        return STR
-
-    def _type_Name(self, e: ast.Name) -> tuple | None:
-        if e.id in self.var_types:
-            return self.var_types[e.id]
-        if e.id in self.locals:
-            return None
-        r = self.p.resolve(self.mod, e.id)
-        if r and r[0] == "enum":
-            return ("enum_type", r[1], r[2])
-        if r and r[0] == "lib" and r[2] in r[1].enums:
-            return ("libenum_type", r[1], r[2])
-        if r and r[0] in ("class", "record") and r[2] in r[1].classinfo:
-            return ("class_type", r[1], r[2])
-        if r and r[0] == "std" and r[1] == "std.web" and r[2] == "h":
-            return ("web_h",)
-        if r and r[0] == "constant":
-            return self.p.constant_type(r[1], r[2])
-        if e.id in self.mod.pymods:
-            name = self.mod.pymods[e.id][0]
-            return ("projmod", self.p.modules[name]) if name in self.p.modules else ("pymod", name)
-        return None
-
-    def _type_Attribute(self, e: ast.Attribute) -> tuple | None:
-        base = self.type_of(e.value)
-        if base is None or base[0] == "optional":
-            return None  # x.attr on a value that may be None is reported where it is visited
-        kind = base[0]
-        if kind == "stdtype":
-            member = std.STD_TYPE_MEMBERS.get(base[2], {}).get(e.attr)
-            return self.p.ann_type(self.mod, ast.parse(member, mode="eval").body) if member else None
-        if (kind in INSTANCES or kind == "class_type") and base[2] in base[1].classinfo:
-            found = self.p.member(base[1], base[2], e.attr)
-            if found and found[0] in ("field", "classattr"):
-                if found[0] == "classattr" and base[2] in base[1].enums:
-                    return ("enum", base[1], base[2])  # Color.RED
-                return self.p.ann_type(found[1], found[2]) if found[2] is not None else None
-            if found and found[2].kind == "property":
-                return self.p.ann_type(found[1], found[2].node.returns)
-            if kind == "record" and not found:
-                fld = base[1].records[base[2]].get(e.attr)
-                return self.p.ann_type(base[1], fld[0]) if fld else None
-            if kind == "class_type" and base[2] in base[1].enums and e.attr in base[1].enums[base[2]]:
-                return ("enum", base[1], base[2])
-            return None
-        if kind == "enum_type" and e.attr in base[1].enums[base[2]]:
-            return ("enum", base[1], base[2])
-        if kind == "librecord":
-            fields = dict(base[1].records.get(base[2], []))
-            return self.p.lib_type(base[1], fields[e.attr]) if e.attr in fields else None
-        if kind == "libenum_type" and e.attr in base[1].enums[base[2]]:
-            return ("libenum", base[1], base[2])
-        if kind == "result" and e.attr == "value":
-            return base[2] if len(base) > 2 else None
-        if kind == "ctx" and e.attr in std.CTX_PARTS:
-            return ("ctx_part", e.attr)
-        if kind == "pymod" and f"{base[1]}.{e.attr}" in std.STDLIB:
-            return ("pymod", f"{base[1]}.{e.attr}")
-        return None
-
-    def _type_Call(self, e: ast.Call) -> tuple | None:
-        if isinstance(e.func, ast.Name) and e.func.id == "__jig_try__" and len(e.args) == 1:
-            unwrapped = self.type_of(e.args[0])  # x? is what x holds when it is Ok / Some
-            return unwrapped[2] if unwrapped and unwrapped[0] == "result" and len(unwrapped) > 2 else None
-        if isinstance(e.func, ast.Attribute):
-            return self._method_type(e)
-        if isinstance(e.func, ast.Name) and e.func.id not in self.locals:
-            return self._call_type(e, e.func.id)
-        return None
-
-    def _method_type(self, e: ast.Call) -> tuple | None:
-        """What receiver.method(...) returns."""
-        owner = self.type_of(e.func.value)  # type: ignore[attr-defined]
-        method = e.func.attr  # type: ignore[attr-defined]
-        if not owner:
-            return None
-        if owner == ("web_h",):
-            return ("stdtype", "std.web", "Html")
-        if (owner[0] in INSTANCES or owner[0] == "class_type") and owner[2] in owner[1].classinfo:
-            found = self.p.member(owner[1], owner[2], method)
-            return self.p.ann_type(found[1], found[2].node.returns) if found and found[0] == "method" else None
-        if owner[0] == "projmod":
-            r = self.p.resolve(owner[1], method)
-            if r and r[0] == "function":
-                return self.p.ann_type(r[1], r[1].functions[r[2]].node.returns)
-            return (r[0], r[1], r[2]) if r and r[0] in ("record", "newtype") else None
-        if owner[0] == "result":
-            payload = owner[2] if len(owner) > 2 else None
-            return payload if method == "unwrap_or" else BOOL if method in ("is_ok", "is_err", "is_some", "is_nothing") else None
-        if owner[0] in ("newtype", "libnewtype"):
-            base = owner[1].newtypes[owner[2]]
-            return method_return(("prim", base), method, len(e.args))
-        return method_return(owner, method, len(e.args) + len(e.keywords))
-
-    def _call_type(self, e: ast.Call, name: str) -> tuple | None:
-        """What calling the global or builtin `name` returns."""
-        r = self.p.resolve(self.mod, name)
-        if r is None:
-            return self._builtin_type(e, name) if name in std.BUILTINS else None
-        kind = r[0]
-        if kind in ("record", "newtype"):
-            return (kind, r[1], r[2])
-        if kind == "class" and r[2] in r[1].classinfo:
-            return ("obj", r[1], r[2])
-        if kind == "function":
-            return self.p.ann_type(r[1], r[1].functions[r[2]].node.returns)
-        if kind == "lib":
-            if r[2] in r[1].records or r[2] in r[1].newtypes:
-                return ("librecord" if r[2] in r[1].records else "libnewtype", r[1], r[2])
-            ret = r[1].returns.get(r[2])
-            return self.p.lib_type(r[1], ret) if ret else None
-        if kind == "py" and isinstance(getattr(stdlib_module(r[1]), r[2], None), type):
-            return ("pyinst", r[1], r[2])
-        if kind == "std":
-            if (r[1], r[2]) in std.STD_TYPES:
-                return ("stdtype", r[1], r[2])
-            if (r[1], r[2]) in std.STD_RETURNS:
-                return ("stdtype", r[1], std.STD_RETURNS[(r[1], r[2])])
-            if r[2] in ("Ok", "Err", "Some"):
-                payload = self.type_of(e.args[0]) if r[2] != "Err" and len(e.args) == 1 else None
-                return ("result", "Option" if r[2] == "Some" else "Result", payload)
-        return None
-
-    def _builtin_type(self, e: ast.Call, name: str) -> tuple | None:
-        args = e.args
-        first = self.type_of(args[0]) if args else None
-        fixed = {"len": INT, "ord": INT, "hash": INT, "id": INT, "str": STR, "repr": STR, "chr": STR, "hex": STR,
-                 "oct": STR, "bin": STR, "ascii": STR, "format": STR, "bool": BOOL, "isinstance": BOOL,
-                 "callable": BOOL, "any": BOOL, "all": BOOL, "float": FLOAT, "bytes": ("prim", "bytes")}
-        if name in fixed:
-            return fixed[name]
-        if name == "int":
-            return INT
-        if name == "abs":
-            return first
-        if name == "round":
-            return INT if len(args) == 1 else FLOAT
-        if name in ("min", "max"):
-            if len(args) == 1:
-                return element(first)
-            types = [self.type_of(a) for a in args]
-            return types[0] if types and all(t == types[0] for t in types) else None
-        if name == "sum":
-            if len(args) == 2:
-                return self.type_of(args[1])
-            elem = element(first)
-            return elem if elem in (INT, FLOAT) else None
-        if name in ("sorted", "list", "reversed", "filter"):
-            source = first if name != "filter" else (self.type_of(args[1]) if len(args) > 1 else None)
-            return list_of(element(source)) if source else None
-        if name == "set":
-            return ("set", element(first)) if first else None
-        if name == "dict":
-            return first if first and first[0] == "dict" else None
-        if name == "enumerate":
-            return list_of(("tuple", (INT, element(first)))) if first else None
-        if name == "zip":
-            types = [element(self.type_of(a)) for a in args]
-            return list_of(("tuple", tuple(types))) if args else None
-        if name == "range":
-            return list_of(INT)
-        if name == "divmod":
-            return ("tuple", (INT, INT)) if first == INT else None
-        return None
-
-    def _type_List(self, e: ast.List) -> tuple | None:
-        return self._collection("list", e.elts)
-
-    def _type_Set(self, e: ast.Set) -> tuple | None:
-        return self._collection("set", e.elts)
-
-    def _collection(self, kind: str, elts: list[ast.expr]) -> tuple | None:
-        if not elts or any(isinstance(x, ast.Starred) for x in elts):
-            return None
-        types = [self.type_of(x) for x in elts]
-        same = types[0] if types[0] and all(t and not self.p.mismatch(types[0], t) and not self.p.mismatch(t, types[0]) for t in types) else None
-        return (kind, same)
-
-    def _type_Tuple(self, e: ast.Tuple) -> tuple | None:
-        if any(isinstance(x, ast.Starred) for x in e.elts):
-            return None
-        return ("tuple", tuple(self.type_of(x) for x in e.elts))
-
-    def _type_Dict(self, e: ast.Dict) -> tuple | None:
-        if not e.keys or any(k is None for k in e.keys):  # {} or {**other}
-            return None
-        keys = [self.type_of(k) for k in e.keys]  # type: ignore[arg-type]
-        values = [self.type_of(v) for v in e.values]
-        return ("dict", _common(keys), _common(values))
-
-    def _type_Subscript(self, e: ast.Subscript) -> tuple | None:
-        base = self.type_of(e.value)
-        if not base or base[0] == "optional":
-            return None
-        if isinstance(e.slice, ast.Slice):
-            return base if base[0] in ("list", "prim") and base != BOOL else None
-        if base[0] == "list":
-            return base[1]
-        if base[0] == "dict":
-            return base[2]
-        if base == STR:
-            return STR
-        if base == ("prim", "bytes"):
-            return INT
-        if base[0] == "tuple" and isinstance(e.slice, ast.Constant) and isinstance(e.slice.value, int):
-            items = base[1]
-            return items[e.slice.value] if -len(items) <= e.slice.value < len(items) else None
-        return None
-
-    def _comprehension_type(self, e: ast.expr, results: list[ast.expr]) -> list[tuple | None]:
-        """The types of a comprehension's results, with its loop variables bound only inside it."""
-        saved, saved_narrowed = dict(self.var_types), set(self.narrowed)
-        try:
-            for gen in e.generators:  # type: ignore[attr-defined]
-                self._bind(gen.target, self.type_of(gen.iter))
-                for cond in gen.ifs:
-                    self.narrowed |= self._facts(cond)[0]
-            return [self.type_of(r) for r in results]
-        finally:
-            self.var_types, self.narrowed = saved, saved_narrowed
-
-    def _type_ListComp(self, e: ast.ListComp) -> tuple | None:
-        return list_of(self._comprehension_type(e, [e.elt])[0])
-
-    def _type_GeneratorExp(self, e: ast.GeneratorExp) -> tuple | None:
-        return list_of(self._comprehension_type(e, [e.elt])[0])
-
-    def _type_SetComp(self, e: ast.SetComp) -> tuple | None:
-        return ("set", self._comprehension_type(e, [e.elt])[0])
-
-    def _type_DictComp(self, e: ast.DictComp) -> tuple | None:
-        key, value = self._comprehension_type(e, [e.key, e.value])
-        return ("dict", key, value)
-
-    def _type_IfExp(self, e: ast.IfExp) -> tuple | None:
-        yes, no = self._facts(e.test)
-        with self._assuming(yes):
-            a = self.type_of(e.body)
-        with self._assuming(no):
-            b = self.type_of(e.orelse)
-        if a == b:
-            return a
-        if b == ("none",):
-            return optional(a)
-        if a == ("none",):
-            return optional(b)
-        return None
-
-    def _type_BoolOp(self, e: ast.BoolOp) -> tuple | None:
-        types = [self.type_of(v) for v in e.values]
-        if isinstance(e.op, ast.Or) and len(types) == 2 and types[1] and strip_optional(types[0]) == types[1]:
-            return types[1]  # maybe_name or "anonymous"
-        return types[0] if all(t == types[0] for t in types) else None
-
-    def _type_NamedExpr(self, e: ast.NamedExpr) -> tuple | None:
-        return self.type_of(e.value)
-
-    def _type_BinOp(self, e: ast.BinOp) -> tuple | None:
-        left, right = self.type_of(e.left), self.type_of(e.right)
-        if not isinstance(e.op, ast.Div):
-            for side in (left, right):
-                if side and side[0] == "newtype":
-                    return side
-        if not (left and right):
-            return None
-        if left[0] == right[0] == "prim":
-            a, b = left[1], right[1]
-            numbers = {"int", "float", "bool"}
-            if isinstance(e.op, ast.Div) and {a, b} <= numbers:
-                return FLOAT
-            if {a, b} <= {"int", "bool"}:
-                return INT
-            if {a, b} <= numbers:
-                return FLOAT
-            if a == b == "str" and isinstance(e.op, ast.Add):
-                return STR
-            if isinstance(e.op, (ast.Mult, ast.Mod)) and STR in (left, right):
-                return STR
-        if isinstance(e.op, ast.Add) and left == right and left[0] in ("list", "tuple"):
-            return left
-        if isinstance(e.op, ast.Mult) and left[0] == "list" and right == INT:
-            return left
-        return None
-
-    def _type_UnaryOp(self, e: ast.UnaryOp) -> tuple | None:
-        if isinstance(e.op, ast.Not):
-            return BOOL
-        return self.type_of(e.operand)
-
-    def _type_Compare(self, e: ast.Compare) -> tuple | None:
-        return BOOL
-
     # -- narrowing: what a condition proves about None
-
-    def _facts(self, test: ast.expr) -> tuple[set[str], set[str]]:
-        """(known not None when test is true, known not None when it is false), as name paths (`o.note`)."""
-        if isinstance(test, (ast.Name, ast.Attribute)):
-            ref = _ref(test)
-            return ({ref} if ref else set()), set()
-        if isinstance(test, ast.NamedExpr):
-            return {test.target.id}, set()
-        if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-            yes, no = self._facts(test.operand)
-            return no, yes
-        if isinstance(test, ast.Compare) and len(test.ops) == 1:
-            left, op, right = test.left, test.ops[0], test.comparators[0]
-            subject = left if isinstance(right, ast.Constant) and right.value is None else None
-            if subject is not None and (text := _ref(subject)):
-                if isinstance(op, (ast.IsNot, ast.NotEq)):
-                    return {text}, set()
-                if isinstance(op, (ast.Is, ast.Eq)):
-                    return set(), {text}
-            if subject is None and (text := _ref(left)) and isinstance(op, (ast.Eq, ast.In, ast.Gt, ast.Lt, ast.GtE, ast.LtE)):
-                return {text}, set()  # x == "a", x > 0: then x is not None
-        if isinstance(test, ast.BoolOp):
-            parts = [self._facts(v) for v in test.values]
-            if isinstance(test.op, ast.And):
-                return set().union(*(y for y, _ in parts)), set()
-            return set(), set().union(*(n for _, n in parts))
-        if isinstance(test, ast.Call) and isinstance(test.func, ast.Name) and test.func.id == "isinstance" and test.args:
-            ref = _ref(test.args[0])
-            return ({ref} if ref else set()), set()
-        return set(), set()
-
-    @contextlib.contextmanager
-    def _assuming(self, facts: set[str]):
-        saved = set(self.narrowed)
-        self.narrowed |= facts
-        try:
-            yield
-        finally:
-            self.narrowed = saved
-
-    def _forget(self, target: ast.expr) -> None:
-        """An assignment to target: what was known about it, and about its attributes, no longer holds."""
-        text = _ref(target)
-        if text and self.narrowed:
-            self.narrowed = {n for n in self.narrowed if n != text and not n.startswith(text + ".")}
 
     # -- structure
 
@@ -1786,7 +1539,9 @@ class BodyChecker(ast.NodeVisitor):
             self.visit(stmt)
         after_else = self.narrowed
         # After the if, only what holds on every branch that falls through.
-        exits = [state for state, block in ((after_body, node.body), (after_else, node.orelse)) if not _terminates(block)]
+        exits = [
+            state for state, block in ((after_body, node.body), (after_else, node.orelse)) if not _terminates(block)
+        ]
         self.narrowed = set.intersection(*exits) if exits else before
 
     def visit_While(self, node: ast.While) -> None:
@@ -1821,7 +1576,9 @@ class BodyChecker(ast.NodeVisitor):
             self.visit(node.orelse)
 
     def visit_Match(self, node: ast.Match) -> None:
-        wildcard = any(isinstance(c.pattern, ast.MatchAs) and c.pattern.pattern is None and c.guard is None for c in node.cases)
+        wildcard = any(
+            isinstance(c.pattern, ast.MatchAs) and c.pattern.pattern is None and c.guard is None for c in node.cases
+        )
         if not wildcard:
             enum_seen: dict[tuple[str, str], set[str]] = {}
             enum_owner: dict[tuple[str, str], ModuleInfo] = {}
@@ -1831,7 +1588,11 @@ class BodyChecker(ast.NodeVisitor):
                 p = patterns.pop()
                 if isinstance(p, ast.MatchOr):
                     patterns.extend(p.patterns)
-                elif isinstance(p, ast.MatchValue) and isinstance(p.value, ast.Attribute) and isinstance(p.value.value, ast.Name):
+                elif (
+                    isinstance(p, ast.MatchValue)
+                    and isinstance(p.value, ast.Attribute)
+                    and isinstance(p.value.value, ast.Name)
+                ):
                     r = self.p.resolve(self.mod, p.value.value.id)
                     if r and r[0] == "enum":
                         key = (r[1].name, r[2])
@@ -1842,10 +1603,17 @@ class BodyChecker(ast.NodeVisitor):
             for key, got in enum_seen.items():
                 missing = [v for v in enum_owner[key].enums[key[1]] if v not in got]
                 if missing:
-                    self.err("T003", f"match on {key[1]} is missing: {', '.join(missing)}", node, context={"missing": missing})
+                    self.err(
+                        "T003",
+                        f"match on {key[1]} is missing: {', '.join(missing)}",
+                        node,
+                        context={"missing": missing},
+                    )
             if classes & {"Ok", "Err"} and not {"Ok", "Err"} <= classes:
                 missing = sorted({"Ok", "Err"} - classes)
-                self.err("T003", f"match on Result is missing: {', '.join(missing)}", node, context={"missing": missing})
+                self.err(
+                    "T003", f"match on Result is missing: {', '.join(missing)}", node, context={"missing": missing}
+                )
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
@@ -1857,7 +1625,9 @@ class BodyChecker(ast.NodeVisitor):
                 self._set_type(target.id, value_type)
             elif isinstance(target, (ast.Tuple, ast.List)) and not any(isinstance(x, ast.Starred) for x in target.elts):
                 count = None
-                if isinstance(node.value, (ast.Tuple, ast.List)) and not any(isinstance(x, ast.Starred) for x in node.value.elts):
+                if isinstance(node.value, (ast.Tuple, ast.List)) and not any(
+                    isinstance(x, ast.Starred) for x in node.value.elts
+                ):
                     count = len(node.value.elts)
                 elif value_type and value_type[0] == "tuple":
                     count = len(value_type[1])
@@ -1869,7 +1639,7 @@ class BodyChecker(ast.NodeVisitor):
         self.generic_visit(node)
         if isinstance(node.op, (ast.Add, ast.Sub, ast.Mod)):
             self._mix(node.target, node.value)
-        self._operands(node.target, node.value, node)
+        self._operands(node.target, node.value)
 
     def _in_function(self, node: ast.AST, is_async: bool) -> None:
         self._scopes.append(node)
@@ -1911,10 +1681,19 @@ class BodyChecker(ast.NodeVisitor):
 
     def visit_Expr(self, node: ast.Expr) -> None:
         if isinstance(node.value, ast.Call) and (name := self._coroutine(node.value)):
-            self.err("T012", f"'{name}' is async: this call makes a coroutine that never runs; write `await {ast.unparse(node.value)}`",
-                     node.value, fix={"kind": "replace_token", "from": ast.unparse(node.value), "to": f"await {ast.unparse(node.value)}",
-                                      "confidence": "high"} if self._async[-1] else {"kind": "review", "hint":
-                                      "await it inside an async def, or run it with asyncio.run(...)"})
+            self.err(
+                "T012",
+                f"'{name}' is async: this call makes a coroutine that never runs; write `await {ast.unparse(node.value)}`",
+                node.value,
+                fix={
+                    "kind": "replace_token",
+                    "from": ast.unparse(node.value),
+                    "to": f"await {ast.unparse(node.value)}",
+                    "confidence": "high",
+                }
+                if self._async[-1]
+                else {"kind": "review", "hint": "await it inside an async def, or run it with asyncio.run(...)"},
+            )
         self.generic_visit(node)
 
     def _coroutine(self, call: ast.Call) -> str | None:
@@ -1934,7 +1713,11 @@ class BodyChecker(ast.NodeVisitor):
                 found = self.p.member(owner[1], owner[2], f.attr)
                 if found and found[0] == "method" and isinstance(found[2].node, ast.AsyncFunctionDef):
                     return found[2].qualname
-            if owner and owner[0] == "pymod" and inspect.iscoroutinefunction(getattr(stdlib_module(owner[1]), f.attr, None)):
+            if (
+                owner
+                and owner[0] == "pymod"
+                and inspect.iscoroutinefunction(getattr(stdlib_module(owner[1]), f.attr, None))
+            ):
                 return f"{owner[1]}.{f.attr}"
         return None
 
@@ -1945,8 +1728,15 @@ class BodyChecker(ast.NodeVisitor):
             return
         if got and got[0] == "optional" and not self.p.mismatch(want, got[1]):
             text = ast.unparse(value)
-            self.err("T013", f"'{text}' may be None, but {what} expects {type_name(want)}", value,
-                     fix={"kind": "review", "hint": f"check it first: `if {text} is None: ...` (return, raise or use a default)"})
+            self.err(
+                "T013",
+                f"'{text}' may be None, but {what} expects {type_name(want)}",
+                value,
+                fix={
+                    "kind": "review",
+                    "hint": f"check it first: `if {text} is None: ...` (return, raise or use a default)",
+                },
+            )
             return
         fix = None
         if want and want[0] in ("newtype", "libnewtype") and got and got[0] == "prim":
@@ -1955,16 +1745,32 @@ class BodyChecker(ast.NodeVisitor):
             if base == got[1] or (base == "float" and got[1] == "int"):
                 txt = ast.unparse(value)
                 fix = {"kind": "replace_token", "from": txt, "to": f"{want[2]}({txt})", "confidence": "high"}
-        elif want and want[0] == "prim" and got and got[0] in ("newtype", "libnewtype") and got[1].newtypes[got[2]] == want[1]:
+        elif (
+            want
+            and want[0] == "prim"
+            and got
+            and got[0] in ("newtype", "libnewtype")
+            and got[1].newtypes[got[2]] == want[1]
+        ):
             txt = ast.unparse(value)
             fix = {"kind": "replace_token", "from": txt, "to": f"{want[1]}({txt})", "confidence": "high"}
         elif want and want[0] == "result" and got and got[0] != "result":
             txt = ast.unparse(value)
-            fix = {"kind": "replace_token", "from": txt, "to": f"{'Some' if want[1] == 'Option' else 'Ok'}({txt})", "confidence": "medium"}
+            fix = {
+                "kind": "replace_token",
+                "from": txt,
+                "to": f"{'Some' if want[1] == 'Option' else 'Ok'}({txt})",
+                "confidence": "medium",
+            }
         elif got and got[0] == "result" and want and want[0] != "result":
             fix = {"kind": "review", "hint": "unwrap it with ? (in a function returning Result), or match on Ok/Err"}
-        self.err("T010", f"{what} expects {type_name(want)}, got {type_name(got)}", value,
-                 context={"expected": type_name(want), "actual": type_name(got)}, fix=fix)
+        self.err(
+            "T010",
+            f"{what} expects {type_name(want)}, got {type_name(got)}",
+            value,
+            context={"expected": type_name(want), "actual": type_name(got)},
+            fix=fix,
+        )
 
     def _declared_error(self) -> str | None:
         t = self.p.ann_type(self.mod, getattr(self._scope, "returns", None))
@@ -1973,8 +1779,12 @@ class BodyChecker(ast.NodeVisitor):
     def _error_of(self, e: ast.expr) -> str | None:
         """The error type name an expression would produce as an Err, when known."""
         if (
-            isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id == "Err" and len(e.args) == 1
-            and isinstance(e.args[0], ast.Attribute) and isinstance(e.args[0].value, ast.Name)
+            isinstance(e, ast.Call)
+            and isinstance(e.func, ast.Name)
+            and e.func.id == "Err"
+            and len(e.args) == 1
+            and isinstance(e.args[0], ast.Attribute)
+            and isinstance(e.args[0].value, ast.Name)
         ):
             r = self.p.resolve(self.mod, e.args[0].value.id)
             if r and (r[0] == "enum" or (r[0] == "lib" and r[2] in r[1].enums)):
@@ -1988,9 +1798,14 @@ class BodyChecker(ast.NodeVisitor):
         got = self._error_of(e)
         if want and got and got != want:
             self.err(
-                "T009", f"{how} a {got} error, but '{self._scope_name()}' returns {want} errors",
-                e, fix={"kind": "review", "hint": f"check the Err and return the {want} variant the request names for "
-                        f"it (e.g. `if r.is_err(): return Err({want}.<VARIANT>)`), or convert with `.map_err(...)`"},
+                "T009",
+                f"{how} a {got} error, but '{self._scope_name()}' returns {want} errors",
+                e,
+                fix={
+                    "kind": "review",
+                    "hint": f"check the Err and return the {want} variant the request names for "
+                    f"it (e.g. `if r.is_err(): return Err({want}.<VARIANT>)`), or convert with `.map_err(...)`",
+                },
             )
 
     def visit_Return(self, node: ast.Return) -> None:
@@ -2087,7 +1902,12 @@ class BodyChecker(ast.NodeVisitor):
         if not isinstance(node.ctx, ast.Load):
             return
         self.names_used.add(node.id)
-        if node.id in self.locals or node.id in std.BUILTINS or node.id in std.INTERNAL or node.id in ("__name__", "__doc__"):
+        if (
+            node.id in self.locals
+            or node.id in std.BUILTINS
+            or node.id in std.INTERNAL
+            or node.id in ("__name__", "__doc__")
+        ):
             return
         if node.id in std.F001_CALLS or node.id in std.F002_CALLS:
             return  # reported once, as F001/F002, by visit_Call
@@ -2113,8 +1933,15 @@ class BodyChecker(ast.NodeVisitor):
 
     def _maybe_none(self, value: ast.expr) -> None:
         text = ast.unparse(value)
-        self.err("T013", f"'{text}' may be None here", value,
-                 fix={"kind": "review", "hint": f"check it first: `if {text} is not None:`, or return early when it is None"})
+        self.err(
+            "T013",
+            f"'{text}' may be None here",
+            value,
+            fix={
+                "kind": "review",
+                "hint": f"check it first: `if {text} is not None:`, or return early when it is None",
+            },
+        )
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
         base = self.type_of(node.value)
@@ -2123,31 +1950,51 @@ class BodyChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        via_super = isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "super"
+        via_super = (
+            isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "super"
+        )
         if node.attr.startswith("__") and not via_super:
             self.err("F002", f"dunder attribute '{node.attr}' is not allowed", node)
         base = self.type_of(node.value)
         if base and base[0] == "optional" and not isinstance(node.ctx, ast.Store):
             self._maybe_none(node.value)
-        elif base and base[0] in INSTANCES | {"class_type"} and base[2] in base[1].classinfo and not node.attr.startswith("__"):
+        elif (
+            base
+            and base[0] in INSTANCES | {"class_type"}
+            and base[2] in base[1].classinfo
+            and not node.attr.startswith("__")
+        ):
             self._check_member(node, base)
         elif base and base[0] in ("newtype", "libnewtype") and not self._has_attr(base, node.attr):
             prim, value = base[1].newtypes[base[2]], ast.unparse(node.value)
-            self.err("R002", f"newtype '{base[2]}' has no attribute '{node.attr}'; use {prim}(x) for the underlying value",
-                     node, fix={"kind": "replace_token", "from": f"{value}.{node.attr}", "to": f"{prim}({value})",
-                                "confidence": "medium"})
-        elif base and (rule := self._attribute_rule(base)) and not node.attr.startswith("_"):
+            self.err(
+                "R002",
+                f"newtype '{base[2]}' has no attribute '{node.attr}'; use {prim}(x) for the underlying value",
+                node,
+                fix={
+                    "kind": "replace_token",
+                    "from": f"{value}.{node.attr}",
+                    "to": f"{prim}({value})",
+                    "confidence": "medium",
+                },
+            )
+        elif base and (rule := self.attribute_rule(base)) and not node.attr.startswith("_"):
             label, noun, names, listed = rule
             if self._has_attr(base, node.attr, names):
                 self._attribute_effect(base, node)
             else:
                 fix, cands = replace_fix(node.attr, names)
                 hint = (f"; it has: {_listing(names)}" if listed else "") + (
-                    "; looping over a dict gives its keys: use .values() or .items()" if base == STR and not cands else "")
-                self.err("R002", f"{label} has no {noun} '{node.attr}'{hint}", node, context={"candidates": cands}, fix=fix)
+                    "; looping over a dict gives its keys: use .values() or .items()"
+                    if base == STR and not cands
+                    else ""
+                )
+                self.err(
+                    "R002", f"{label} has no {noun} '{node.attr}'{hint}", node, context={"candidates": cands}, fix=fix
+                )
         self.generic_visit(node)
 
-    def _attribute_rule(self, base: tuple) -> tuple[str, str, list[str], bool] | None:
+    def attribute_rule(self, base: tuple) -> tuple[str, str, list[str], bool] | None:
         """For a value of this type: (how a message names it, what its attributes are called, their names, whether
         a message lists them). None when its attributes are not known."""
         kind = base[0]
@@ -2208,15 +2055,26 @@ class BodyChecker(ast.NodeVisitor):
         if found is None:
             if self.p.class_of(owner, name)[1]:
                 return  # a base outside the project may provide it
-            if kind == "obj" and storing and self.func and self.func.cls and self.p.is_subclass(owner, name, ("obj", self.mod, self.func.cls)):
+            if (
+                kind == "obj"
+                and storing
+                and self.func
+                and self.func.cls
+                and self.p.is_subclass(owner, name, ("obj", self.mod, self.func.cls))
+            ):
                 return
             names = self.p.members(owner, name)
             if kind == "record":
                 fields = owner.records[name]
                 fix, cands = replace_fix(node.attr, names)
-                self.err("R002", f"record '{name}' has no field '{node.attr}'; its fields: {_listing(fields)}"
-                         + (f"; methods: {_listing(sorted(set(names) - set(fields)))}" if set(names) - set(fields) else ""),
-                         node, context={"record": name, "known_fields": sorted(fields), "candidates": cands}, fix=fix)
+                self.err(
+                    "R002",
+                    f"record '{name}' has no field '{node.attr}'; its fields: {_listing(fields)}"
+                    + (f"; methods: {_listing(sorted(set(names) - set(fields)))}" if set(names) - set(fields) else ""),
+                    node,
+                    context={"record": name, "known_fields": sorted(fields), "candidates": cands},
+                    fix=fix,
+                )
                 return
             fix, cands = replace_fix(node.attr, names)
             what = "enum" if kind == "enum" or ci.kind == "enum" else "class"
@@ -2226,11 +2084,24 @@ class BodyChecker(ast.NodeVisitor):
                 msg = f"{what} '{name}' has no attribute '{node.attr}'; it has: {_listing(names)}"
             self.err("R002", msg, node, context={"candidates": cands, "members": names}, fix=fix)
             return
-        if storing and kind in ("record", "enum") and owner.classinfo[name].kind in ("record", "enum") and name not in owner.py_records:
+        if (
+            storing
+            and kind in ("record", "enum")
+            and owner.classinfo[name].kind in ("record", "enum")
+            and name not in owner.py_records
+        ):
             what = "record" if kind == "record" else "enum"
-            self.err("T011", f"{what} '{name}' is immutable; build a changed copy with replace({ast.unparse(node.value)}, {node.attr}=...)"
-                     if kind == "record" else f"enum '{name}' is immutable", node,
-                     fix={"kind": "review", "hint": "records never change: return replace(record, field=value) from std.record"})
+            self.err(
+                "T011",
+                f"{what} '{name}' is immutable; build a changed copy with replace({ast.unparse(node.value)}, {node.attr}=...)"
+                if kind == "record"
+                else f"enum '{name}' is immutable",
+                node,
+                fix={
+                    "kind": "review",
+                    "hint": "records never change: return replace(record, field=value) from std.record",
+                },
+            )
         elif storing and found[0] == "method" and found[2].kind != "property":
             self.err("T011", f"'{name}.{node.attr}' is a method; it cannot be assigned", node)
 
@@ -2256,171 +2127,127 @@ class BodyChecker(ast.NodeVisitor):
         if obj is not None and callable(obj) and (problem := call_problem(obj, node, bound)):
             self.err("T006", f"'{label}': {problem}", node)
 
-    def _check_element(self, node: ast.Call, tag: str) -> None:
-        """h.<tag>(...): known attributes, and every link, form and htmx call answered by a route."""
-        method_kw = next((kw.value for kw in node.keywords if kw.arg == "method"), None)
-        form_method = method_kw.value.upper() if isinstance(method_kw, ast.Constant) and isinstance(method_kw.value, str) else "GET"
-        for kw in node.keywords:
-            if kw.arg is None:
-                continue
-            if not web.html_attr_ok(tag, kw.arg):
-                allowed = sorted(a + "_" if keyword.iskeyword(a) else a  # class -> class_: what Python accepts
-                                 for a in web.GLOBAL_ATTRS | web.TAG_ATTRS.get(tag, frozenset()) | set(web.HTMX_ATTRS))
-                fix, cands = replace_fix(kw.arg, allowed)
-                hint = " (write class_ for class)" if kw.arg == "class" else ""
-                self.err("R002", f"<{tag}> has no attribute '{kw.arg}'{hint}", kw.value, context={"candidates": cands}, fix=fix)
-            elif kw.arg in web.URL_ATTRS:
-                method = web.URL_ATTRS[kw.arg] or (form_method if tag in ("form", "button", "input") else "GET")
-                self._check_link(kw.value, method)
-                if tag == "form" and kw.arg in ("action", "get", "post", "put", "patch", "delete"):
-                    self._check_form(node, kw.value, method)
-
-    def _check_form(self, form: ast.Call, target: ast.expr, method: str) -> None:
-        """A form's fields against the handler it submits to: each field the handler requires must be one of the
-        form's inputs, and each named input should be something the handler takes."""
-        path = self._literal_path(target)
-        found = self.p.handler_for(method, path.split("?")[0]) if path else None
-        if not found:
-            return
-        pattern, mod, fi = found
-        sent: dict[str, ast.expr] = {}
-        computed = False
-        for n in ast.walk(form):
-            if n is form or not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and self.type_of(n.func.value) == ("web_h",)):
-                continue
-            if n.func.attr not in ("input", "textarea", "select", "button"):
-                continue
-            name = next((kw.value for kw in n.keywords if kw.arg == "name"), None)
-            if isinstance(name, ast.Constant) and isinstance(name.value, str):
-                sent[name.value] = name
-            elif name is not None:
-                computed = True  # a computed name could be anything: only the known ones are compared
-        sent_in_query = set(dict(p.split("=", 1) for p in path.split("?", 1)[1].split("&") if "=" in p)) if "?" in path else set()
-        required, optional = self.p.form_fields(mod, pattern, fi)
-        missing = [r for r in required if r not in sent and r not in sent_in_query]
-        if missing and not computed:
-            self.err("R005", f"this form submits to {method} {pattern}, but '{fi.name}' also needs: {', '.join(missing)}; "
-                     f"the form sends: {', '.join(sorted(sent)) or 'nothing'}", form,
-                     fix={"kind": "review", "hint": f"add h.input(name=\"{missing[0]}\", ...) to the form"})
-        if not fi.varkw and not any(self.p.ann_type(mod, a.annotation) == ("stdtype", "std.web", "Request")
-                                    for a in fi.node.args.args + fi.node.args.kwonlyargs):
-            takes = set(required) | set(optional)
-            for name, node in sent.items():
-                fix, cands = replace_fix(name, takes)
-                if name not in takes and cands:  # an extra field is ignored; one that is close to a real one is a typo
-                    self.err("R005", f"'{fi.name}' takes no field '{name}'; it takes: {', '.join(sorted(takes)) or 'none'}",
-                             node, context={"candidates": cands}, fix=fix)
-
-    @staticmethod
-    def _literal_path(value: ast.expr) -> str | None:
-        if isinstance(value, ast.Constant) and isinstance(value.value, str):
-            return value.value
-        if isinstance(value, ast.JoinedStr):
-            return "".join(v.value if isinstance(v, ast.Constant) else "x" for v in value.values)
-        return None
-
-    def _check_link(self, value: ast.expr, method: str) -> None:
-        """A link to this app: a path some route answers. External, relative and computed links are not checked."""
-        if isinstance(value, ast.Constant) and isinstance(value.value, str):
-            path = value.value
-        elif isinstance(value, ast.JoinedStr):
-            path = "".join(v.value if isinstance(v, ast.Constant) else "x" for v in value.values)
-        else:
-            return
-        if not path.startswith("/") or path.startswith("//") or not self.p.routes:
-            return
-        path = path.split("#")[0].split("?")[0]
-        if not self.p.route_for(method, path):
-            known = sorted({f"{m} {pat}" for m, pat, _, _, _ in self.p.routes})
-            self.err("R004", f"no route answers {method} {path}; routes: {_listing(known)}", value,
-                     context={"routes": known})
-
     def visit_Call(self, node: ast.Call) -> None:
-        self._check_py_call(node)
         f = node.func
         self._callees.add(id(f))
+        self._check_py_call(node)
         called = self.type_of(f) if isinstance(f, (ast.Name, ast.Attribute, ast.Subscript)) else None
         if called and called[0] in NOT_CALLABLE:
             self.err("T014", f"'{ast.unparse(f)}' is a {type_name(called)}, not a function", f)
-        if isinstance(f, ast.Name) and f.id == "sum" and f.id not in self.locals and len(node.args) == 1 and not node.keywords:
-            elem = element(self.type_of(node.args[0]))
-            if elem and elem[0] in ("newtype", "libnewtype"):
-                arg = ast.unparse(node.args[0])
-                self.err("T002", f"sum() starts from the plain number 0, which cannot mix with {elem[2]}", node,
-                         fix={"kind": "replace_token", "from": f"sum({arg})", "to": f"sum({arg}, {elem[2]}(0))", "confidence": "high"})
-        if isinstance(f, ast.Attribute) and self.type_of(f.value) == ("web_h",) and f.attr in web.HTML_TAGS:
+        if isinstance(f, ast.Attribute):
+            self._call_attribute(node, f)
+        elif isinstance(f, ast.Name) and f.id not in self.locals:
+            self._call_name(node, f.id)
+        self.generic_visit(node)
+
+    def _call_attribute(self, node: ast.Call, f: ast.Attribute) -> None:
+        """receiver.name(...): an HTML element, a method, a function of another module, App.run."""
+        owner = self.type_of(f.value)
+        if not owner or f.attr.startswith("__"):
+            return
+        if owner == ("web_h",) and f.attr in web.HTML_TAGS:
             self._check_element(node, f.attr)
-        if isinstance(f, ast.Name) and f.id not in self.locals:
-            r = self.p.resolve(self.mod, f.id)
-            if r and r == ("std", "std.web", "redirect") and node.args:
-                self._check_link(node.args[0], "GET")
-        if isinstance(f, ast.Attribute) and f.attr == "run" and self.type_of(f.value) == ("stdtype", "std.web", "App"):
+        elif owner == ("stdtype", "std.web", "App") and f.attr == "run":
             self.use("net", node, via="App.run")
-        if isinstance(f, ast.Attribute) and not f.attr.startswith("__"):
-            owner = self.type_of(f.value)
-            if owner and (owner[0] in INSTANCES or owner[0] == "class_type") and owner[2] in owner[1].classinfo:
-                found = self.p.member(owner[1], owner[2], f.attr)
-                if found and found[0] == "method" and found[2].kind != "property":
-                    callee = found[2]
-                    via_class = owner[0] == "class_type"
-                    skip = 1 if callee.kind == "classmethod" else 0 if callee.kind == "static" else (0 if via_class else 1)
-                    self._check_call(node, found[1], callee, skip)
-        if isinstance(f, ast.Attribute) and (owner := self.type_of(f.value)) and owner[0] == "projmod":
+        elif (owner[0] in INSTANCES or owner[0] == "class_type") and owner[2] in owner[1].classinfo:
+            found = self.p.member(owner[1], owner[2], f.attr)
+            if found and found[0] == "method" and found[2].kind != "property":
+                callee = found[2]
+                # what the call fills itself: self through an instance, cls for a classmethod, nothing for a static
+                skip = {"classmethod": 1, "static": 0}.get(callee.kind, 0 if owner[0] == "class_type" else 1)
+                self._check_call(node, found[1], callee, skip)
+        elif owner[0] == "projmod":
             r = self.p.resolve(owner[1], f.attr)
             if r and r[0] == "function":
                 self._check_call(node, r[1], r[1].functions[r[2]])
             elif r and r[0] == "record":
                 self._check_record_ctor(node, r[1], r[2])
-        if isinstance(f, ast.Name) and f.id not in self.locals:
-            name = f.id
-            if name in std.F001_CALLS:
-                self.err("F001", f"'{name}' is not allowed", node)
-            elif name in std.F002_CALLS:
-                self.err("F002", f"'{name}' is not allowed; access fields directly", node)
-            elif name == "__jig_try__":
-                if _returns_base(self._scope) not in ("Result", "Option"):
-                    self.err("T007", f"'?' is only valid in functions returning Result or Option; '{self._scope_name()}' "
-                             "does not", node)
-                elif node.args:
-                    self._check_error_type(node.args[0], "'?' passes on")
-            elif name in std.BUILTIN_EFFECTS:
-                self.use(std.BUILTIN_EFFECTS[name], node)
-            else:
-                r = self.p.resolve(self.mod, name)
-                if r and r[0] == "record":
-                    self._check_record_ctor(node, r[1], r[2])
-                    init = self.p.member(r[1], r[2], "__init__")
-                    if init and init[0] == "method":
-                        self._check_call(node, init[1], init[2], 1)
-                elif r and r[0] == "class" and r[2] in r[1].classinfo:
-                    init = self.p.member(r[1], r[2], "__init__")
-                    if init and init[0] == "method":
-                        self._check_call(node, init[1], init[2], 1)
-                    elif not self.p.class_of(r[1], r[2])[1] and (node.args or node.keywords) and not _unpacks(node):
-                        self.err("T006", f"'{name}' takes no arguments: it has no __init__", node)
-                elif r and r[0] == "newtype" and (len(node.args) != 1 or node.keywords):
-                    self.err("T006", f"'{name}' takes exactly one positional value", node)
-                elif r and r[0] == "newtype":
-                    got = self.type_of(node.args[0])
-                    base = r[1].newtypes[r[2]]
-                    if got and (got[0] in NAMED or (got[0] == "prim" and self.p.mismatch(("prim", base), got))):
-                        self.err("T010", f"'{name}' wraps a {base}, got {type_name(got)}", node.args[0],
-                                 context={"expected": base, "actual": type_name(got)})
-                elif r and r[0] == "function":
-                    self._check_call(node, r[1], r[1].functions[r[2]])
-                elif r and r[0] == "lib":
-                    for eff in sorted(r[1].functions.get(r[2], ())):
-                        self.use(eff, node, via=name)
-                    if r[2] in r[1].params:
-                        params = r[1].params[r[2]]
-                        self._check_arguments(node, r[2], params, set(params), f"{r[2]}({', '.join(params)})")
-                        types = r[1].param_types.get(r[2], [])
-                        if not _unpacks(node):
-                            for param, value in self._bound_args(node, r[1].params[r[2]]):
-                                text = types[r[1].params[r[2]].index(param)] if param in r[1].params[r[2]] else ""
-                                self.type_error(self.p.lib_type(r[1], text) if text else None, value,
-                                                f"'{name}' parameter '{param}'")
-        self.generic_visit(node)
+
+    def _call_name(self, node: ast.Call, name: str) -> None:
+        """name(...): a builtin, `?`, a project function, a constructor, a newtype, a library function."""
+        if name in std.F001_CALLS:
+            self.err("F001", f"'{name}' is not allowed", node)
+        elif name in std.F002_CALLS:
+            self.err("F002", f"'{name}' is not allowed; access fields directly", node)
+        elif name == "__jig_try__":
+            if _returns_base(self._scope) not in ("Result", "Option"):
+                self.err(
+                    "T007",
+                    f"'?' is only valid in functions returning Result or Option; '{self._scope_name()}' does not",
+                    node,
+                )
+            elif node.args:
+                self._check_error_type(node.args[0], "'?' passes on")
+        elif name in std.BUILTIN_EFFECTS:
+            self.use(std.BUILTIN_EFFECTS[name], node)
+        elif name == "sum" and len(node.args) == 1 and not node.keywords:
+            self._check_sum(node)
+        r = self.p.resolve(self.mod, name)
+        kind = r[0] if r else None
+        if kind == "function":
+            self._check_call(node, r[1], r[1].functions[r[2]])
+        elif kind in ("record", "class") and r[2] in r[1].classinfo:
+            if kind == "record":
+                self._check_record_ctor(node, r[1], r[2])
+            init = self.p.member(r[1], r[2], "__init__")
+            if init and init[0] == "method":
+                self._check_call(node, init[1], init[2], 1)
+            elif (
+                kind == "class"
+                and not self.p.class_of(r[1], r[2])[1]
+                and (node.args or node.keywords)
+                and not _unpacks(node)
+            ):
+                self.err("T006", f"'{name}' takes no arguments: it has no __init__", node)
+        elif kind == "newtype":
+            self._check_newtype_value(node, name, r[1].newtypes[r[2]])
+        elif kind == "lib":
+            self._check_lib_call(node, name, r[1], r[2])
+        elif r == ("std", "std.web", "redirect") and node.args:
+            self._check_link(node.args[0], "GET")
+
+    def _check_sum(self, node: ast.Call) -> None:
+        elem = element(self.type_of(node.args[0]))
+        if elem and elem[0] in ("newtype", "libnewtype"):
+            arg = ast.unparse(node.args[0])
+            self.err(
+                "T002",
+                f"sum() starts from the plain number 0, which cannot mix with {elem[2]}",
+                node,
+                fix={
+                    "kind": "replace_token",
+                    "from": f"sum({arg})",
+                    "to": f"sum({arg}, {elem[2]}(0))",
+                    "confidence": "high",
+                },
+            )
+
+    def _check_newtype_value(self, node: ast.Call, name: str, base: str) -> None:
+        if len(node.args) != 1 or node.keywords:
+            self.err("T006", f"'{name}' takes exactly one positional value", node)
+            return
+        got = self.type_of(node.args[0])
+        if got and (got[0] in NAMED or (got[0] == "prim" and self.p.mismatch(("prim", base), got))):
+            self.err(
+                "T010",
+                f"'{name}' wraps a {base}, got {type_name(got)}",
+                node.args[0],
+                context={"expected": base, "actual": type_name(got)},
+            )
+
+    def _check_lib_call(self, node: ast.Call, name: str, man: Manifest, fn: str) -> None:
+        """A call to a library function: its declared effects, arguments and argument types."""
+        for eff in sorted(man.functions.get(fn, ())):
+            self.use(eff, node, via=name)
+        params = man.params.get(fn)
+        if params is None:
+            return
+        self._check_arguments(node, fn, params, set(params), f"{fn}({', '.join(params)})")
+        if not _unpacks(node):
+            types = dict(zip(params, man.param_types.get(fn, [])))
+            for param, value in self._bound_args(node, params):
+                text = types.get(param, "")
+                self.type_error(self.p.lib_type(man, text) if text else None, value, f"'{name}' parameter '{param}'")
 
     def _bound_args(self, node: ast.Call, params: list[str]) -> list[tuple[str, ast.expr]]:
         """(parameter, value) for each argument of a call."""
@@ -2433,53 +2260,88 @@ class BodyChecker(ast.NodeVisitor):
         if _unpacks(node):
             return
         for fname, value in self._bound_args(node, list(fields) if rec in owner.py_records else []) + [
-                (kw.arg, kw.value) for kw in node.keywords if kw.arg in fields and rec not in owner.py_records]:
+            (kw.arg, kw.value) for kw in node.keywords if kw.arg in fields and rec not in owner.py_records
+        ]:
             self.type_error(self.p.ann_type(owner, fields[fname][0]), value, f"'{rec}' field '{fname}'")
         given: set[str] = set()
         if node.args and rec in owner.py_records:
             if len(node.args) > len(fields):
-                self.err("T005", f"'{rec}' has {len(fields)} fields, got {len(node.args)} values: {', '.join(fields)}", node)
+                self.err(
+                    "T005", f"'{rec}' has {len(fields)} fields, got {len(node.args)} values: {', '.join(fields)}", node
+                )
             given = set(list(fields)[: len(node.args)])
         elif node.args:
-            self.err("T005", f"build '{rec}' with keyword arguments: {rec}(field=value, ...)", node, context={"fields": list(fields)})
+            self.err(
+                "T005",
+                f"build '{rec}' with keyword arguments: {rec}(field=value, ...)",
+                node,
+                context={"fields": list(fields)},
+            )
         for kw in node.keywords:
             if kw.arg not in fields:
                 fix, cands = replace_fix(kw.arg, fields)
-                self.err("R002", f"record '{rec}' has no field '{kw.arg}'; its fields: {_listing(fields)}", kw.value, context={"known_fields": sorted(fields), "candidates": cands}, fix=fix)
+                self.err(
+                    "R002",
+                    f"record '{rec}' has no field '{kw.arg}'; its fields: {_listing(fields)}",
+                    kw.value,
+                    context={"known_fields": sorted(fields), "candidates": cands},
+                    fix=fix,
+                )
             else:
                 given.add(kw.arg)
         missing = [f for f, (_, has_default) in fields.items() if not has_default and f not in given]
         if missing and (not node.args or rec in owner.py_records):
             self.err("T005", f"'{rec}' is missing fields: {', '.join(missing)}", node, context={"missing": missing})
 
-    def _check_arguments(self, node: ast.Call, label: str, params: list[str], required: set[str], sig: str,
-                         varargs: bool = False, varkw: bool = False) -> None:
+    def _check_arguments(
+        self,
+        node: ast.Call,
+        label: str,
+        params: list[str],
+        required: set[str],
+        sig: str,
+        varargs: bool = False,
+        varkw: bool = False,
+    ) -> None:
         """A call's arguments against a signature: how many, which keywords, none given twice, none missing."""
         if _unpacks(node):
             return  # f(*xs) / f(**kw): what is passed is only known at runtime
         if len(node.args) > len(params) and not varargs:
-            self.err("T006", f"'{label}' takes {len(params)} arguments, got {len(node.args)}: the signature is {sig}", node)
+            self.err(
+                "T006", f"'{label}' takes {len(params)} arguments, got {len(node.args)}: the signature is {sig}", node
+            )
         given = set(params[: len(node.args)])
         for kw in node.keywords:
             if kw.arg not in params:
                 if not varkw:
                     fix, cands = replace_fix(kw.arg, params)
-                    self.err("R002", f"'{label}' has no parameter '{kw.arg}'; the signature is {sig}", kw.value,
-                             context={"params": params, "candidates": cands}, fix=fix)
+                    self.err(
+                        "R002",
+                        f"'{label}' has no parameter '{kw.arg}'; the signature is {sig}",
+                        kw.value,
+                        context={"params": params, "candidates": cands},
+                        fix=fix,
+                    )
             elif kw.arg in given:
                 self.err("T006", f"parameter '{kw.arg}' is given twice", kw.value)
             else:
                 given.add(kw.arg)
         missing = [x for x in params if x in required and x not in given]
         if missing:
-            self.err("T006", f"'{label}' is missing arguments: {', '.join(missing)}; the signature is {sig}", node,
-                     context={"missing": missing})
+            self.err(
+                "T006",
+                f"'{label}' is missing arguments: {', '.join(missing)}; the signature is {sig}",
+                node,
+                context={"missing": missing},
+            )
 
     def _effects_through(self, owner: ModuleInfo, callee: FuncInfo, node: ast.AST, via: str) -> None:
         """This code may run callee: its effects are this code's too."""
         if self.callees is not None:
             key = (owner.name, callee.qualname)  # the call graph, for effects_of and real_effects; first call site kept
-            self.callees.setdefault(key, (owner, callee, getattr(node, "lineno", 1), getattr(node, "col_offset", 0), via))
+            self.callees.setdefault(
+                key, (owner, callee, getattr(node, "lineno", 1), getattr(node, "col_offset", 0), via)
+            )
             if callee.effects is None:
                 return  # resolved by effects_of, all at once
         for eff in sorted(self.p.effects_of(owner, callee)):
@@ -2496,7 +2358,11 @@ class BodyChecker(ast.NodeVisitor):
         params = callee.params[skip:]
         for param, value in self._bound_args(node, params):
             self.type_error(self.p.ann_type(owner, annotations.get(param)), value, f"'{label}' parameter '{param}'")
-        sig = _signature(callee, skip).replace(f"{callee.cls}.__init__(", f"{callee.cls}(") if callee.cls else _signature(callee, skip)
+        sig = (
+            _signature(callee, skip).replace(f"{callee.cls}.__init__(", f"{callee.cls}(")
+            if callee.cls
+            else _signature(callee, skip)
+        )
         self._check_arguments(node, label, params, callee.required, sig, callee.varargs, callee.varkw)
 
     # -- newtype mixing
@@ -2518,25 +2384,37 @@ class BodyChecker(ast.NodeVisitor):
         if "raw" in (a, b):
             nt, raw = (b, left) if a == "raw" else (a, right)
             txt = ast.unparse(raw)
-            self.err("T002", f"cannot mix {nt} with a plain value", raw, fix={"kind": "replace_token", "from": txt, "to": f"{nt}({txt})", "confidence": "high"})
+            self.err(
+                "T002",
+                f"cannot mix {nt} with a plain value",
+                raw,
+                fix={"kind": "replace_token", "from": txt, "to": f"{nt}({txt})", "confidence": "high"},
+            )
         else:
             self.err("T002", f"cannot mix {a} and {b}", left)
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
         if isinstance(node.op, (ast.Add, ast.Sub, ast.Mod)):
             self._mix(node.left, node.right)
-        self._operands(node.left, node.right, node)
+        self._operands(node.left, node.right)
         self.generic_visit(node)
 
-    def _operands(self, left: ast.expr, right: ast.expr, node: ast.AST) -> None:
+    def _operands(self, left: ast.expr, right: ast.expr) -> None:
         """Arithmetic on a Result (not unwrapped) or on a value that may be None."""
         for side in (left, right):
             t = self.type_of(side)
             if t and t[0] == "optional":
                 self._maybe_none(side)
             elif t and t[0] == "result":
-                self.err("T010", f"'{ast.unparse(side)}' is a {type_name(t)}, not its value; unwrap it with ? or match on it",
-                         side, fix={"kind": "review", "hint": "write `value = expr?` in a function returning Result, or match on Ok/Err"})
+                self.err(
+                    "T010",
+                    f"'{ast.unparse(side)}' is a {type_name(t)}, not its value; unwrap it with ? or match on it",
+                    side,
+                    fix={
+                        "kind": "review",
+                        "hint": "write `value = expr?` in a function returning Result, or match on Ok/Err",
+                    },
+                )
 
     def visit_Compare(self, node: ast.Compare) -> None:
         operands = [node.left, *node.comparators]

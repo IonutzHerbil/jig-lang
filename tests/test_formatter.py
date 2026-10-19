@@ -22,16 +22,23 @@ def meaning(text: str) -> str:
     return ast.dump(tree)
 
 
-@pytest.mark.parametrize("source, expected", [
-    # a multi-line import ends a sorted run instead of being torn apart
-    ('from c import z\nfrom b import (\n    x,\n)\n', 'from c import z\nfrom b import (\n    x,\n)\n'),
-    # text inside a multi-line string is never touched: trailing spaces, blank lines, tabs, lines starting with from
-    ('TEXT = """one   \n\n\n\n\n\tfrom z import a\nfrom b import c\n"""\n',
-     'TEXT = """one   \n\n\n\n\n\tfrom z import a\nfrom b import c\n"""\n'),
-    # code: trailing whitespace, tabs, runs of blank lines, sorted imports and names
-    ('from c import z, a\nfrom b import y\n\n\n\n\nX = 1   \nif X:\n\tY = 2\n',
-     'from b import y\nfrom c import a, z\n\n\nX = 1\nif X:\n    Y = 2\n'),
-])
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        # a multi-line import ends a sorted run instead of being torn apart
+        ("from c import z\nfrom b import (\n    x,\n)\n", "from c import z\nfrom b import (\n    x,\n)\n"),
+        # text inside a multi-line string is never touched: trailing spaces, blank lines, tabs, lines starting with from
+        (
+            'TEXT = """one   \n\n\n\n\n\tfrom z import a\nfrom b import c\n"""\n',
+            'TEXT = """one   \n\n\n\n\n\tfrom z import a\nfrom b import c\n"""\n',
+        ),
+        # code: trailing whitespace, tabs, runs of blank lines, sorted imports and names
+        (
+            "from c import z, a\nfrom b import y\n\n\n\n\nX = 1   \nif X:\n\tY = 2\n",
+            "from b import y\nfrom c import a, z\n\n\nX = 1\nif X:\n    Y = 2\n",
+        ),
+    ],
+)
 def test_format(source, expected):
     assert format_source(source) == expected
     assert format_source(expected) == expected

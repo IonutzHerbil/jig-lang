@@ -111,7 +111,12 @@ def report(root: Path, work: Path, changed: list[Path]) -> str:
         out += list(difflib.unified_diff(before, after, f"a/{rel.as_posix()}", f"b/{rel.as_posix()}", lineterm=""))
     files = sorted({x for c in changed for x in with_imports(c, work)})
     project, _ = check_project([str(f) for f in files], run_ex=False)
-    names = {fi for m in project.modules.values() if Path(m.file).resolve() in {c.resolve() for c in changed} for fi in m.functions}
+    names = {
+        fi
+        for m in project.modules.values()
+        if Path(m.file).resolve() in {c.resolve() for c in changed}
+        for fi in m.functions
+    }
     probes = [line for line in edge_probes(project).splitlines() if line.strip().split("(")[0] in names]
     if probes:
         out += ["", "How the new code behaves on edge inputs (check these match what you want):", *probes]

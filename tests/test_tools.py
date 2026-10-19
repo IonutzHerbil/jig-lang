@@ -15,7 +15,7 @@ def jig(*args, cwd=None):
 
 
 def test_fix_turns_constant_chains_into_match():
-    src = '''module t
+    src = """module t
 
 
 def f(code: str) -> int:
@@ -25,7 +25,7 @@ def f(code: str) -> int:
         return 2
     else:
         return 3
-'''
+"""
     fixed, applied = fix_source(src)
     assert applied["D003"] == 1
     assert "match code:" in fixed and 'case "a":' in fixed and "case _:" in fixed
@@ -58,8 +58,9 @@ def test_gate_fails_on_a_bug_the_tests_miss(copy_of):
 
 
 def hook(kind, event):
-    return subprocess.run([sys.executable, "-m", "jig.hook", kind], input=json.dumps(event),
-                          capture_output=True, text=True)
+    return subprocess.run(
+        [sys.executable, "-m", "jig.hook", kind], input=json.dumps(event), capture_output=True, text=True
+    )
 
 
 def test_hooks_map_check_remember_and_gate(copy_of):
@@ -130,7 +131,11 @@ def test_entry_point_launcher_and_dockerfile(tmp_path):
     root = tmp_path / "hello"
     assert json.loads((root / ".jig" / "config.json").read_text(encoding="utf-8"))["entry"] == "hello.app.main"
     dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
-    assert "RUN jig gate ." in dockerfile and "--entry hello.app.main" in dockerfile and 'CMD ["python", "/app"]' in dockerfile
+    assert (
+        "RUN jig gate ." in dockerfile
+        and "--entry hello.app.main" in dockerfile
+        and 'CMD ["python", "/app"]' in dockerfile
+    )
     assert (root / ".dockerignore").is_file()
 
     assert jig("run", cwd=root).stdout.strip() == "Hello, world!"
@@ -162,7 +167,9 @@ def farewell(name: str) -> str:
     return "Bye, " + name + "!"
 '''
     answers = [
-        "I add a farewell.\n```jig\n# file: shop/farewell.jig\n" + farewell.replace('"Bye, " + name', '"Bye, " + nme') + "```",
+        "I add a farewell.\n```jig\n# file: shop/farewell.jig\n"
+        + farewell.replace('"Bye, " + name', '"Bye, " + nme')
+        + "```",
         "Fixed the name.\n```jig\n# file: shop/farewell.jig\n" + farewell + "```",
     ]
     seen_prompts = []
@@ -175,7 +182,9 @@ def farewell(name: str) -> str:
     assert ok and reading == "I add a farewell."
     assert "unknown name 'nme'" in seen_prompts[1] and "fix: replace 'nme' with 'name'" in seen_prompts[1]
     assert [p.name for p in changed] == ["farewell.jig"]
-    assert {p: p.read_text(encoding="utf-8") for p in root.rglob("*.jig") if p.is_file()} == before  # nothing applied yet
+    assert {
+        p: p.read_text(encoding="utf-8") for p in root.rglob("*.jig") if p.is_file()
+    } == before  # nothing applied yet
     assert "+def farewell(name: str) -> str:" in report(root, work, changed)
 
 
@@ -185,7 +194,8 @@ def test_probes_and_examples_never_run_code_that_reaches_the_real_world(tmp_path
     victim.mkdir()
     (victim / "data.txt").write_text("important", encoding="utf-8")
     (tmp_path / "p").mkdir()
-    (tmp_path / "p" / "m.jig").write_text(f'''module m
+    (tmp_path / "p" / "m.jig").write_text(
+        f'''module m
 
 import shutil
 
@@ -206,7 +216,9 @@ def tidy(folder: str) -> int:
 def pure(n: int) -> int:
     """Safe."""
     return n * 2
-''', encoding="utf-8")
+''',
+        encoding="utf-8",
+    )
     checked = jig("check", "--pretty", str(tmp_path / "p")).stdout
     assert "W003" in checked and (victim / "data.txt").is_file()  # examples run on every check: not this one
     out = jig("probe", str(tmp_path / "p")).stdout

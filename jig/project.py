@@ -1,8 +1,8 @@
 """Start a Jig project, or add Jig to an existing one.
 
-    jig new <dir> [--web]     a fresh project: an example module (or a web app), project files, Claude Code, Docker
-    jig init [dir]            add Jig to an existing project: Claude Code skill and hooks, .jig/config.json
-    jig init --user           the Claude Code skill and hooks for every project on this machine
+jig new <dir> [--web]     a fresh project: an example module (or a web app), project files, Claude Code, Docker
+jig init [dir]            add Jig to an existing project: Claude Code skill and hooks, .jig/config.json
+jig init --user           the Claude Code skill and hooks for every project on this machine
 """
 
 from __future__ import annotations
@@ -28,12 +28,16 @@ HOOKS = {
 def _is_jig_hook(command: str) -> bool:
     """Any Jig hook from this or an earlier install, whichever Python it named."""
     return "-m jig.hook" in command
+
+
 GITIGNORE = ["build/", "__pycache__/", ".jig/session-*.json"]
 
 
 def skill_text() -> str:
-    return "\n\n".join((CARDS / name).read_text(encoding="utf-8")
-                       for name in ("skill_header.md", "jig_short.md", "jig_short_project.md"))
+    return "\n\n".join(
+        (CARDS / name).read_text(encoding="utf-8")
+        for name in ("skill_header.md", "jig_short.md", "jig_short_project.md")
+    )
 
 
 def setup_claude(claude_dir: Path) -> list[str]:
@@ -49,7 +53,9 @@ def setup_claude(claude_dir: Path) -> list[str]:
         entries = hooks.setdefault(event, [])
         current = [h for e in entries for h in e.get("hooks", []) if h.get("command") == command]
         for entry in entries:  # replace Jig hooks from earlier installs or other Pythons
-            entry["hooks"] = [h for h in entry.get("hooks", []) if not _is_jig_hook(h.get("command", "")) or h in current]
+            entry["hooks"] = [
+                h for h in entry.get("hooks", []) if not _is_jig_hook(h.get("command", "")) or h in current
+            ]
         entries[:] = [e for e in entries if e.get("hooks")]
         if not current:
             entry = {"hooks": [{"type": "command", "command": command}]}
@@ -102,8 +108,13 @@ def docker_files(root: Path, entry: str | None, force: bool = False, web: bool =
     if not entry:
         pkg = re.sub(r"\W", "_", root.name.lower()).strip("_") or "app"
         entry = f"{pkg}.app.main"
-    text = DOCKERFILE.format(name=name, source=JIG_SOURCE, entry=entry,
-                           ports=" -p 8000:8000" if web else "", expose="\nEXPOSE 8000" if web else "")
+    text = DOCKERFILE.format(
+        name=name,
+        source=JIG_SOURCE,
+        entry=entry,
+        ports=" -p 8000:8000" if web else "",
+        expose="\nEXPOSE 8000" if web else "",
+    )
     done = []
     dockerfile = root / "Dockerfile"
     if dockerfile.exists() and not force:
@@ -122,7 +133,9 @@ def init(root: Path, entry: str | None = None) -> list[str]:
     """Add Jig to a project: Claude Code skill and hooks, .jig/config.json, .gitignore entries."""
     done = []
     added = setup_claude(root / ".claude")
-    done.append(f"Claude Code: skill and hooks in {root / '.claude'}" + (f" (added {', '.join(added)})" if added else ""))
+    done.append(
+        f"Claude Code: skill and hooks in {root / '.claude'}" + (f" (added {', '.join(added)})" if added else "")
+    )
     config = root / ".jig" / "config.json"
     config.parent.mkdir(parents=True, exist_ok=True)
     current = json.loads(config.read_text(encoding="utf-8")) if config.exists() else {}
@@ -281,7 +294,7 @@ Or ask Jig directly: `jig do "add a farewell next to the greeting"`
 jig check --pretty .   every check
 jig gate .             checks, then tests: use in CI and before committing
 {run}
-docker build -t {pkg} . && docker run --rm{' -p 8000:8000' if web else ''} {pkg}       the image builds only when every check passes
+docker build -t {pkg} . && docker run --rm{" -p 8000:8000" if web else ""} {pkg}       the image builds only when every check passes
 ```
 
 ## Project files
@@ -305,14 +318,17 @@ def new(target: Path, web: bool = False) -> list[str]:
     files |= {
         "README.md": _readme(name, pkg, web),
         "lib/README.md": "Library manifests: one `<name>.manifest` per third-party service or package. "
-                         "Format: `jig doc manifest`.\n",
+        "Format: `jig doc manifest`.\n",
         ".decisions/README.md": "Project decisions: one `<id>.decision` per rule. Jig enforces the ✓ newtype "
-                                "lines; AIs read the rest.\n",
+        "lines; AIs read the rest.\n",
     }
     for rel, text in files.items():
         path = target / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(format_source(text) if rel.endswith(".jig") else text, encoding="utf-8")
     entry = f"{pkg}.app.app" if web else f"{pkg}.app.main"
-    return [f"created {target} ({'Jig web' if web else 'Jig'} project, package '{pkg}')", *init(target, entry),
-            *docker_files(target, entry, web=web)]
+    return [
+        f"created {target} ({'Jig web' if web else 'Jig'} project, package '{pkg}')",
+        *init(target, entry),
+        *docker_files(target, entry, web=web),
+    ]

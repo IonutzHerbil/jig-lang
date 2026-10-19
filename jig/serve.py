@@ -19,8 +19,10 @@ from .cli import check_project, feedback_for_model
 from .files import project_config, watched_files
 from .transpiler import build
 
-CHILD = "import sys; sys.path.insert(0, sys.argv[1]); import importlib; " \
-        "getattr(importlib.import_module(sys.argv[2]), sys.argv[3]).run(port=int(sys.argv[4]))"
+CHILD = (
+    "import sys; sys.path.insert(0, sys.argv[1]); import importlib; "
+    "getattr(importlib.import_module(sys.argv[2]), sys.argv[3]).run(port=int(sys.argv[4]))"
+)
 FALLBACK = """import sys
 sys.path.insert(0, sys.argv[1])
 from jig_runtime import App, h, page
@@ -67,8 +69,12 @@ class DevServer:
     def start(self, args: list[str]) -> None:
         self.stop()
         self.version += 1
-        env = {**os.environ, "JIG_DEV_VERSION": str(self.version), "JIG_DEV_STATUS": str(self.status),
-               "PYTHONUNBUFFERED": "1"}
+        env = {
+            **os.environ,
+            "JIG_DEV_VERSION": str(self.version),
+            "JIG_DEV_STATUS": str(self.status),
+            "PYTHONUNBUFFERED": "1",
+        }
         self.child = subprocess.Popen([sys.executable, *args], cwd=self.root, env=env)
 
     def stop(self) -> None:
@@ -85,9 +91,12 @@ class DevServer:
         if not summary["ok"]:
             errors = feedback_for_model(project)
             self.status.write_text(errors, encoding="utf-8")
-            print(f"\njig check failed ({summary['errors']} errors); "
-                  f"{'still serving the last version that passed' if self.running_good else 'nothing to serve yet'}:\n\n"
-                  f"{errors}\n", flush=True)
+            print(
+                f"\njig check failed ({summary['errors']} errors); "
+                f"{'still serving the last version that passed' if self.running_good else 'nothing to serve yet'}:\n\n"
+                f"{errors}\n",
+                flush=True,
+            )
             if not self.running_good and self.child is None:
                 fallback = self.tmp / "fallback.py"
                 fallback.write_text(FALLBACK, encoding="utf-8")
@@ -105,8 +114,10 @@ class DevServer:
         self.start(["-c", CHILD, str(out), module, name, str(self.port)])
         self.running_good = True
         ex = summary["examples"]
-        print(f"jig check: ok, examples {ex['passed']}/{ex['total']}; serving {target} on http://localhost:{self.port}",
-              flush=True)
+        print(
+            f"jig check: ok, examples {ex['passed']}/{ex['total']}; serving {target} on http://localhost:{self.port}",
+            flush=True,
+        )
         return True
 
     def watch(self) -> int:

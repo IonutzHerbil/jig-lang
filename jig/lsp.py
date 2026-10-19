@@ -39,7 +39,17 @@ DEBOUNCE = 0.25  # seconds of quiet typing before a re-check
 # LSP enums
 ERROR, WARNING = 1, 2
 K_FUNCTION, K_FIELD, K_VARIABLE, K_CLASS, K_MODULE, K_KEYWORD, K_ENUM_MEMBER, K_CONSTANT = 3, 5, 6, 7, 9, 14, 20, 21
-S_CLASS, S_METHOD, S_PROPERTY, S_FIELD, S_ENUM, S_FUNCTION, S_CONSTANT, S_STRUCT, S_ENUM_MEMBER = 5, 6, 7, 8, 10, 12, 14, 23, 22
+S_CLASS, S_METHOD, S_PROPERTY, S_FIELD, S_ENUM, S_FUNCTION, S_CONSTANT, S_STRUCT, S_ENUM_MEMBER = (
+    5,
+    6,
+    7,
+    8,
+    10,
+    12,
+    14,
+    23,
+    22,
+)
 
 
 def to_utf16(text: str, col: int) -> int:
@@ -329,9 +339,11 @@ class Server:
         fi = self.enclosing(project, mod, line)
         if fi is None:
             return BodyChecker(project, mod, None, set(), {}, silent=True)
-        return project._body_checker(mod, fi, silent=True, until_line=line)[0]
+        return project.body_checker(mod, fi, silent=True, until_line=line)[0]
 
-    def named(self, project: Project, mod: ModuleInfo, checker: BodyChecker, expr: ast.expr) -> tuple[str, Any, Any] | None:
+    def named(
+        self, project: Project, mod: ModuleInfo, checker: BodyChecker, expr: ast.expr
+    ) -> tuple[str, Any, Any] | None:
         """What an expression names: ("function"|"record"|..., owner, name-or-FuncInfo), or ("member", owner, found)."""
         if isinstance(expr, ast.Name):
             if expr.id in checker.var_types or expr.id in checker.locals:
@@ -389,7 +401,14 @@ class Server:
     def declaration(self, project: Project, owner: ModuleInfo, name: str) -> str:
         """One declaration's slice of the interface view."""
         view = render_interface(owner, project).split("\n")
-        keys = (f"type {name} =", f"record {name}:", f"enum {name}:", f"class {name}", f"record {name},", f"enum {name},")
+        keys = (
+            f"type {name} =",
+            f"record {name}:",
+            f"enum {name}:",
+            f"class {name}",
+            f"record {name},",
+            f"enum {name},",
+        )
         out: list[str] = []
         for line in view:
             if any(line.startswith(k) for k in keys):
@@ -481,8 +500,14 @@ class Server:
         items = [{"label": n, "kind": K_VARIABLE} for n in sorted(checker.var_types)]
         for n in sorted(mod.global_names()):
             r = project.resolve(mod, n)
-            kind = {"function": K_FUNCTION, "record": K_CLASS, "class": K_CLASS, "enum": K_CLASS, "newtype": K_CLASS,
-                    "constant": K_CONSTANT}.get(r[0] if r else "", K_MODULE if n in mod.pymods else K_VARIABLE)
+            kind = {
+                "function": K_FUNCTION,
+                "record": K_CLASS,
+                "class": K_CLASS,
+                "enum": K_CLASS,
+                "newtype": K_CLASS,
+                "constant": K_CONSTANT,
+            }.get(r[0] if r else "", K_MODULE if n in mod.pymods else K_VARIABLE)
             items.append({"label": n, "kind": kind})
         items += [{"label": n, "kind": K_FUNCTION} for n in sorted(std.BUILTINS) if n[0].islower()]
         items += [{"label": k, "kind": K_KEYWORD} for k in keyword.kwlist]
@@ -497,10 +522,18 @@ class Server:
             for n in project.members(base[1], base[2]):
                 found = project.member(base[1], base[2], n)
                 is_method = found and found[0] == "method" and found[2].kind != "property"
-                out.append({"label": n, "kind": K_FUNCTION if is_method else K_FIELD, "detail": self.detail(project, found)})
+                out.append(
+                    {"label": n, "kind": K_FUNCTION if is_method else K_FIELD, "detail": self.detail(project, found)}
+                )
             return out
-        rule = checker._attribute_rule(base)
-        kind = K_ENUM_MEMBER if base[0] == "enum_type" else K_FIELD if rule and rule[1] in ("field", "capability") else K_FUNCTION
+        rule = checker.attribute_rule(base)
+        kind = (
+            K_ENUM_MEMBER
+            if base[0] == "enum_type"
+            else K_FIELD
+            if rule and rule[1] in ("field", "capability")
+            else K_FUNCTION
+        )
         return [{"label": n, "kind": kind} for n in (rule[2] if rule else [])]
 
     @staticmethod
@@ -510,7 +543,7 @@ class Server:
         if found[0] == "method":
             fi = found[2]
             ret = ast.unparse(fi.node.returns) if fi.node.returns is not None else "?"
-            return f"({', '.join(fi.params[fi.bound:])}) -> {ret}"
+            return f"({', '.join(fi.params[fi.bound :])}) -> {ret}"
         return ast.unparse(found[2]) if found[2] is not None else ""
 
     # ------------------------------------------------------------ outline
@@ -523,8 +556,10 @@ class Server:
             return []
 
         def sym(name: str, kind: int, node: ast.AST, children: list | None = None) -> dict:
-            r = {"start": {"line": node.lineno - 1, "character": 0},
-                 "end": {"line": (getattr(node, "end_lineno", None) or node.lineno) - 1, "character": 0}}
+            r = {
+                "start": {"line": node.lineno - 1, "character": 0},
+                "end": {"line": (getattr(node, "end_lineno", None) or node.lineno) - 1, "character": 0},
+            }
             return {"name": name, "kind": kind, "range": r, "selectionRange": r, "children": children or []}
 
         out = []

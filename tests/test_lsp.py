@@ -11,7 +11,9 @@ from conftest import FIXTURES
 
 class Client:
     def __init__(self, root: Path):
-        self.proc = subprocess.Popen([sys.executable, "-m", "jig", "lsp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.proc = subprocess.Popen(
+            [sys.executable, "-m", "jig", "lsp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE
+        )
         self.next_id = 0
         self.notes: list[dict] = []
         self.request("initialize", {"rootUri": root.as_uri(), "capabilities": {}})
@@ -24,7 +26,7 @@ class Client:
 
     def _read(self) -> dict:
         length = 0
-        while (line := self.proc.stdout.readline().strip()):
+        while line := self.proc.stdout.readline().strip():
             if line.lower().startswith(b"content-length"):
                 length = int(line.split(b":")[1])
         return json.loads(self.proc.stdout.read(length))
@@ -81,18 +83,27 @@ def run(a: Account) -> Money:
     uri = path.as_uri()
     c = Client(root)
     try:
-        c.notify("textDocument/didOpen", {"textDocument": {"uri": uri, "languageId": "jig", "version": 1, "text": good}})
+        c.notify(
+            "textDocument/didOpen", {"textDocument": {"uri": uri, "languageId": "jig", "version": 1, "text": good}}
+        )
         assert c.diagnostics(uri) == []
 
         # Unsaved edits are checked: errors follow the buffer, not the file on disk.
         bad = good.replace("a.deposit(Money(5))", 'a.depositt("5")')
-        c.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": bad}]})
+        c.notify(
+            "textDocument/didChange", {"textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": bad}]}
+        )
         diags = c.diagnostics(uri)
         assert [d["code"] for d in diags] == ["R002"], diags
-        assert "has no attribute 'depositt'" in diags[0]["message"] and "fix: replace 'depositt' with 'deposit'" in diags[0]["message"]
+        assert (
+            "has no attribute 'depositt'" in diags[0]["message"]
+            and "fix: replace 'depositt' with 'deposit'" in diags[0]["message"]
+        )
         assert diags[0]["range"]["start"] == at(bad, "depositt")
 
-        c.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": 3}, "contentChanges": [{"text": good}]})
+        c.notify(
+            "textDocument/didChange", {"textDocument": {"uri": uri, "version": 3}, "contentChanges": [{"text": good}]}
+        )
         assert c.diagnostics(uri) == []
 
         doc = {"textDocument": {"uri": uri}}
@@ -109,7 +120,9 @@ def run(a: Account) -> Money:
 
         # Typing `a.` breaks the file: completion and hover must work after the re-check has seen the broken buffer.
         typing = good.replace("    left = a.deposit(Money(5))", "    left = a.")
-        c.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": 4}, "contentChanges": [{"text": typing}]})
+        c.notify(
+            "textDocument/didChange", {"textDocument": {"uri": uri, "version": 4}, "contentChanges": [{"text": typing}]}
+        )
         assert [d["code"] for d in c.diagnostics(uri)] == ["S001"]
         items = c.request("textDocument/completion", {**doc, "position": at(typing, "a.\n", 2)})["items"]
         labels = {i["label"] for i in items}
@@ -117,7 +130,9 @@ def run(a: Account) -> Money:
         hover = c.request("textDocument/hover", {**doc, "position": at(typing, "a: Account")})
         assert "a: Account" in hover["contents"]["value"]
 
-        outline = c.request("textDocument/documentSymbol", {"textDocument": {"uri": (root / "bank" / "accounts.jig").as_uri()}})
+        outline = c.request(
+            "textDocument/documentSymbol", {"textDocument": {"uri": (root / "bank" / "accounts.jig").as_uri()}}
+        )
         account = next(s for s in outline if s["name"] == "Account")
         assert {"deposit", "withdraw", "__init__"} <= {ch["name"] for ch in account["children"]}
     finally:
@@ -132,11 +147,19 @@ def test_positions_are_utf16_like_the_protocol(tmp_path):
     path.write_text(text, encoding="utf-8")
     c = Client(tmp_path)
     try:
-        c.notify("textDocument/didOpen", {"textDocument": {"uri": path.as_uri(), "languageId": "jig", "version": 1, "text": text}})
+        c.notify(
+            "textDocument/didOpen",
+            {"textDocument": {"uri": path.as_uri(), "languageId": "jig", "version": 1, "text": text}},
+        )
         [d] = c.diagnostics(path.as_uri())
         assert d["range"]["start"]["character"] == len(line[: line.index("nmae")].encode("utf-16-le")) // 2
-        hover = c.request("textDocument/hover", {"textDocument": {"uri": path.as_uri()},
-                                                 "position": {"line": 9, "character": d["range"]["start"]["character"] - 2}})
+        hover = c.request(
+            "textDocument/hover",
+            {
+                "textDocument": {"uri": path.as_uri()},
+                "position": {"line": 9, "character": d["range"]["start"]["character"] - 2},
+            },
+        )
         assert "r: R" in hover["contents"]["value"]  # the editor's UTF-16 position lands on `r`
     finally:
         c.close()

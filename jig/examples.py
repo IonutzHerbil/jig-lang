@@ -11,7 +11,7 @@ from pathlib import Path
 from .checker import Project
 from .diagnostics import Diagnostic
 
-RUNNER = r'''
+RUNNER = r"""
 import asyncio, importlib, inspect, json, sys, traceback
 sys.path.insert(0, sys.argv[1])
 real_stdout = sys.stdout
@@ -63,12 +63,12 @@ for case in cases:
         r["detail"] = traceback.format_exc().strip().splitlines()[-1]
     results.append(r)
 real_stdout.write(json.dumps(results))
-'''
+"""
 
 
 def runtime_import(line: str) -> str:
     """`from std.result import Ok` -> `from jig_runtime import Ok`: std modules live in the runtime when built."""
-    module, _, names = line[len("from "):].partition(" import ")
+    module, _, names = line[len("from ") :].partition(" import ")
     return f"from jig_runtime import {names}" if module.startswith("std.") else line
 
 
@@ -99,13 +99,29 @@ def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diag
         for fi in [*mod.functions.values(), *methods]:
             for ex in fi.examples:
                 if real := _reaches_world(project, mod, fi, ex):
-                    skipped.append(Diagnostic(
-                        "W003", f"example not run: `{ex.call}` would reach the real world ({', '.join(sorted(real))}); "
-                        "go through a lib manifest so examples use its fake", mod.file, ex.line, severity="warning",
-                        module=mod.name, function=fi.qualname))
+                    skipped.append(
+                        Diagnostic(
+                            "W003",
+                            f"example not run: `{ex.call}` would reach the real world ({', '.join(sorted(real))}); "
+                            "go through a lib manifest so examples use its fake",
+                            mod.file,
+                            ex.line,
+                            severity="warning",
+                            module=mod.name,
+                            function=fi.qualname,
+                        )
+                    )
                     continue
-                cases.append({"i": len(cases), "module": mod.name, "call": ex.call, "kind": ex.kind, "expected": ex.expected,
-                              "imports": sorted(runtime_import(i) for i in fi.example_imports)})
+                cases.append(
+                    {
+                        "i": len(cases),
+                        "module": mod.name,
+                        "call": ex.call,
+                        "kind": ex.kind,
+                        "expected": ex.expected,
+                        "imports": sorted(runtime_import(i) for i in fi.example_imports),
+                    }
+                )
                 meta.append((mod, fi, ex))
     if not cases:
         return 0, 0, skipped
@@ -125,7 +141,11 @@ def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diag
     if proc.returncode != 0 or not proc.stdout.strip():
         first = next(iter(project.modules.values()))
         tail = proc.stderr.strip().splitlines()[-1:] or ["no output"]
-        return len(cases), 0, [Diagnostic("C005", f"example runner failed: {tail[0]}", first.file, 1, module=first.name), *skipped]
+        return (
+            len(cases),
+            0,
+            [Diagnostic("C005", f"example runner failed: {tail[0]}", first.file, 1, module=first.name), *skipped],
+        )
 
     diags: list[Diagnostic] = []
     passed = 0
@@ -143,12 +163,19 @@ def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diag
             context["actual"] = r["actual"]
             fix = {"kind": "review", "hint": "fix the body, or update the example if the new behavior is intended"}
         elif detail.startswith("requires rejected the input"):
-            fix = {"kind": "review", "hint": (
-                f"`{ex.call}` never reaches the body: a requires clause refuses it. If refusing it is intended, "
-                f"write `{ex.call} -> rejected`. If it should return Err, drop that requires and check the "
-                "condition in the body: `if ...: return Err(...)`")}
+            fix = {
+                "kind": "review",
+                "hint": (
+                    f"`{ex.call}` never reaches the body: a requires clause refuses it. If refusing it is intended, "
+                    f"write `{ex.call} -> rejected`. If it should return Err, drop that requires and check the "
+                    "condition in the body: `if ...: return Err(...)`"
+                ),
+            }
         elif detail.startswith("expected the requires clause to reject"):
-            fix = {"kind": "review", "hint": "add a `requires:` clause that refuses this input, or change the expected result"}
+            fix = {
+                "kind": "review",
+                "hint": "add a `requires:` clause that refuses this input, or change the expected result",
+            }
         diags.append(
             Diagnostic(
                 code=code,

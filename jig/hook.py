@@ -33,8 +33,12 @@ MAX_STOP_BLOCKS = 3
 
 
 def is_jig_project(root: Path) -> bool:
-    return any(root.glob("lib/*.manifest")) or (root / ".decisions").is_dir() or (root / ".jig").is_dir() \
+    return (
+        any(root.glob("lib/*.manifest"))
+        or (root / ".decisions").is_dir()
+        or (root / ".jig").is_dir()
         or any(f.is_file() for f in root.rglob("*.jig"))
+    )
 
 
 def with_imports(file: Path, root: Path) -> list[Path]:
@@ -166,7 +170,10 @@ def post(event: dict) -> int:
         print(f"{note}jig check: ok, examples {ex['passed']}/{ex['total']} passed")
         return 0
     remember(root, project, state, path)
-    print(f"{note}jig check failed for {file.name}. Fix these and check again:\n\n{feedback_for_model(project)}", file=sys.stderr)
+    print(
+        f"{note}jig check failed for {file.name}. Fix these and check again:\n\n{feedback_for_model(project)}",
+        file=sys.stderr,
+    )
     return 2
 
 
@@ -186,8 +193,10 @@ def stop(event: dict) -> int:
     state["blocks"] += 1
     path.write_text(json.dumps(state), encoding="utf-8")
     remember(root, project, state, path)
-    reason = (f"Jig checks still fail in files you changed ({state['blocks']}/{MAX_STOP_BLOCKS}). Fix them before "
-              f"finishing:\n\n{feedback_for_model(project)}")
+    reason = (
+        f"Jig checks still fail in files you changed ({state['blocks']}/{MAX_STOP_BLOCKS}). Fix them before "
+        f"finishing:\n\n{feedback_for_model(project)}"
+    )
     print(json.dumps({"decision": "block", "reason": reason[:8000]}))
     return 0
 

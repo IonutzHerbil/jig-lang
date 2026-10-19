@@ -47,7 +47,9 @@ class Gemini:
         """turns alternate user, model, user, ...; the last one is the user's."""
         body = {
             "systemInstruction": {"parts": [{"text": system}]},
-            "contents": [{"role": "user" if i % 2 == 0 else "model", "parts": [{"text": t}]} for i, t in enumerate(turns)],
+            "contents": [
+                {"role": "user" if i % 2 == 0 else "model", "parts": [{"text": t}]} for i, t in enumerate(turns)
+            ],
             "generationConfig": {"temperature": self.temperature},
         }
         for attempt in range(6):
@@ -65,13 +67,13 @@ class Gemini:
                 if e.code in (429, 500, 502, 503, 504) and attempt < 5:
                     time.sleep(10 * 2**attempt)
                     continue
-                raise SystemExit(f"gemini {e.code}: {e.read().decode(errors='replace')[:500]}")
+                raise SystemExit(f"gemini {e.code}: {e.read().decode(errors='replace')[:500]}") from e
             except (urllib.error.URLError, http.client.HTTPException, OSError) as e:
                 # Dropped connections and timeouts are transient: wait and retry.
                 if attempt < 5:
                     time.sleep(10 * 2**attempt)
                     continue
-                raise SystemExit(f"gemini: network error after retries: {e}")
+                raise SystemExit(f"gemini: network error after retries: {e}") from e
             parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
             text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
             use = data.get("usageMetadata", {})

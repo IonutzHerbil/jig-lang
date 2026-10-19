@@ -137,8 +137,9 @@ def _expr_start(line: str, pos: int, mask: list[bool]) -> int | None:
 TRY_OPEN = "__jig_try__("
 
 
-def _transform_try(line: str, state: str | None, lineno: int, file: str, diags: list[Diagnostic],
-                   inserts: dict[int, list[int]]) -> str:
+def _transform_try(
+    line: str, state: str | None, lineno: int, file: str, diags: list[Diagnostic], inserts: dict[int, list[int]]
+) -> str:
     """Rewrite every `expr?` on the line as `__jig_try__(expr)`, recording where the text was inserted."""
     starts: list[int] = []
     while True:

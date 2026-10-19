@@ -59,7 +59,7 @@ def _params(text: str) -> list[tuple[str, str]]:
                 params.append((name.strip(), typ.split("=")[0].strip()))
             current = ""
             continue
-        depth += ch in "[(" 
+        depth += ch in "[("
         depth -= ch in "])"
         current += ch
     return params

@@ -29,8 +29,11 @@ def expected(root: Path) -> set[tuple[str, int, str]]:
 def test_case(case):
     root = CASES / case
     _, summary = check_project([str(root)], run_ex=True)  # examples run when nothing else fails
-    got = {(Path(d["location"]["file"]).resolve().relative_to(root.resolve()).as_posix(), d["location"]["line"], d["code"])
-           for d in summary["diagnostics"] if d["severity"] == "error"}
+    got = {
+        (Path(d["location"]["file"]).resolve().relative_to(root.resolve()).as_posix(), d["location"]["line"], d["code"])
+        for d in summary["diagnostics"]
+        if d["severity"] == "error"
+    }
     want = expected(root)
     missing = sorted(want - got)
     unexpected = sorted(got - want)

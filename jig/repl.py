@@ -62,8 +62,10 @@ class Session:
             sys.path.insert(0, str(self.build_dir))
         self.module = types.ModuleType("repl")
         sys.modules["repl"] = self.module
-        exec("import jig_runtime as __jig__\nfrom jig_runtime import Ctx, fixed_ctx, real_ctx, replace, Nothing, Some, Err, Ok",
-             self.module.__dict__)
+        exec(
+            "import jig_runtime as __jig__\nfrom jig_runtime import Ctx, fixed_ctx, real_ctx, replace, Nothing, Some, Err, Ok",
+            self.module.__dict__,
+        )
 
     # ------------------------------------------------------------ checking
 
@@ -74,8 +76,11 @@ class Session:
     def check(self, extra: str) -> tuple[Project, list]:
         project = Project()
         project.load([*self.project_files, Path(self.file)], {self.file: self.source(extra)})
-        errors = [d for d in project.sorted_diags() if d.severity == "error"
-                  and not (d.module == "repl" and d.code in RELAXED)]
+        errors = [
+            d
+            for d in project.sorted_diags()
+            if d.severity == "error" and not (d.module == "repl" and d.code in RELAXED)
+        ]
         return project, errors
 
     def render(self, errors: list) -> str:
@@ -95,7 +100,7 @@ class Session:
         mod = project.modules["repl"]
         tree = _Transformer(mod).visit(copy.deepcopy(mod.tree))
         ast.fix_missing_locations(tree)
-        new = ast.Module(body=tree.body[len(tree.body) - count:], type_ignores=[])
+        new = ast.Module(body=tree.body[len(tree.body) - count :], type_ignores=[])
         exec(compile(new, "<repl>", "exec"), self.module.__dict__)
 
     def submit(self, text: str) -> str:
@@ -115,7 +120,7 @@ class Session:
         if all(self._declares(s) for s in body):
             return self.declare(text, body)
         if len(body) == 1 and isinstance(body[0], ast.Expr):
-            return self.evaluate(text, body[0].value)
+            return self.evaluate(text)
         return self.statements(text)
 
     @staticmethod
@@ -151,8 +156,10 @@ class Session:
             return self.crash()
         return ""
 
-    def evaluate(self, text: str, expr: ast.expr) -> str:
-        wrapper = f"def {WRAPPER}():\n    return (\n" + "\n".join("        " + ln for ln in text.split("\n")) + "\n    )"
+    def evaluate(self, text: str) -> str:
+        wrapper = (
+            f"def {WRAPPER}():\n    return (\n" + "\n".join("        " + ln for ln in text.split("\n")) + "\n    )"
+        )
         project, errors = self.check(wrapper)
         if errors:
             return self.render(errors)

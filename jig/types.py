@@ -22,10 +22,33 @@ NAMED = frozenset({"record", "newtype", "enum", "librecord", "libnewtype", "libe
 # Values whose attributes are a class's members.
 INSTANCES = frozenset({"obj", "record", "enum"})
 # Things that are values a function could never be called as.
-NOT_CALLABLE = frozenset({"prim", "none", "list", "set", "dict", "tuple", "result", "record", "newtype", "enum",
-                          "librecord", "libnewtype", "libenum", "optional"})
+NOT_CALLABLE = frozenset(
+    {
+        "prim",
+        "none",
+        "list",
+        "set",
+        "dict",
+        "tuple",
+        "result",
+        "record",
+        "newtype",
+        "enum",
+        "librecord",
+        "libnewtype",
+        "libenum",
+        "optional",
+    }
+)
 
-INT, FLOAT, STR, BOOL, BYTES, NONE = ("prim", "int"), ("prim", "float"), ("prim", "str"), ("prim", "bool"), ("prim", "bytes"), ("none",)
+INT, FLOAT, STR, BOOL, BYTES, NONE = (
+    ("prim", "int"),
+    ("prim", "float"),
+    ("prim", "str"),
+    ("prim", "bool"),
+    ("prim", "bytes"),
+    ("none",),
+)
 
 
 def list_of(t: tuple | None) -> tuple:
@@ -95,23 +118,45 @@ def type_name(t: tuple | None) -> str:
 
 # "same": the receiver's own type; "elem"/"key"/"value": its element, key or value type; "optvalue": value | None
 STR_METHODS: dict[str, object] = {
-    **dict.fromkeys("capitalize casefold center expandtabs format format_map ljust lower lstrip removeprefix "
-                    "removesuffix replace rjust rstrip strip swapcase title translate upper zfill join".split(), STR),
+    **dict.fromkeys(
+        "capitalize casefold center expandtabs format format_map ljust lower lstrip removeprefix "
+        "removesuffix replace rjust rstrip strip swapcase title translate upper zfill join".split(),
+        STR,
+    ),
     **dict.fromkeys("split rsplit splitlines".split(), list_of(STR)),
-    **dict.fromkeys("startswith endswith isalnum isalpha isascii isdecimal isdigit isidentifier islower isnumeric "
-                    "isprintable isspace istitle isupper".split(), BOOL),
+    **dict.fromkeys(
+        "startswith endswith isalnum isalpha isascii isdecimal isdigit isidentifier islower isnumeric "
+        "isprintable isspace istitle isupper".split(),
+        BOOL,
+    ),
     **dict.fromkeys("count find index rfind rindex".split(), INT),
     "encode": BYTES,
-    "partition": ("tuple", (STR, STR, STR)), "rpartition": ("tuple", (STR, STR, STR)),
+    "partition": ("tuple", (STR, STR, STR)),
+    "rpartition": ("tuple", (STR, STR, STR)),
 }
-LIST_METHODS: dict[str, object] = {"pop": "elem", "copy": "same", "index": INT, "count": INT,
-                                   **dict.fromkeys("append extend insert remove sort reverse clear".split(), NONE)}
-SET_METHODS: dict[str, object] = {**dict.fromkeys("copy union intersection difference symmetric_difference".split(), "same"),
-                                  "pop": "elem", **dict.fromkeys("issubset issuperset isdisjoint".split(), BOOL),
-                                  **dict.fromkeys("add remove discard clear update".split(), NONE)}
-DICT_METHODS: dict[str, object] = {"keys": "keys", "values": "values", "items": "items", "get": "optvalue",
-                                   "pop": "value", "setdefault": "value", "copy": "same",
-                                   **dict.fromkeys("update clear".split(), NONE)}
+LIST_METHODS: dict[str, object] = {
+    "pop": "elem",
+    "copy": "same",
+    "index": INT,
+    "count": INT,
+    **dict.fromkeys("append extend insert remove sort reverse clear".split(), NONE),
+}
+SET_METHODS: dict[str, object] = {
+    **dict.fromkeys("copy union intersection difference symmetric_difference".split(), "same"),
+    "pop": "elem",
+    **dict.fromkeys("issubset issuperset isdisjoint".split(), BOOL),
+    **dict.fromkeys("add remove discard clear update".split(), NONE),
+}
+DICT_METHODS: dict[str, object] = {
+    "keys": "keys",
+    "values": "values",
+    "items": "items",
+    "get": "optvalue",
+    "pop": "value",
+    "setdefault": "value",
+    "copy": "same",
+    **dict.fromkeys("update clear".split(), NONE),
+}
 
 
 def method_return(receiver: tuple | None, method: str, nargs: int) -> tuple | None:
@@ -119,7 +164,9 @@ def method_return(receiver: tuple | None, method: str, nargs: int) -> tuple | No
     if not receiver:
         return None
     kind = receiver[0]
-    table = STR_METHODS if receiver == STR else {"list": LIST_METHODS, "set": SET_METHODS, "dict": DICT_METHODS}.get(kind)
+    table = (
+        STR_METHODS if receiver == STR else {"list": LIST_METHODS, "set": SET_METHODS, "dict": DICT_METHODS}.get(kind)
+    )
     if table is None or method not in table:
         return None
     rule = table[method]

@@ -16,7 +16,9 @@ from .formatter import format_source
 
 def _module_for(project: Project, wrong: str) -> str | None:
     tail = wrong.split(".")[-1]
-    options = {m for m in project.modules if m.split(".")[-1] == tail} | {f"lib.{k}" for k in project.manifests if k == tail}
+    options = {m for m in project.modules if m.split(".")[-1] == tail} | {
+        f"lib.{k}" for k in project.manifests if k == tail
+    }
     return options.pop() if len(options) == 1 else None
 
 
@@ -42,17 +44,26 @@ def fix_imports(files: list[Path], only: set[Path] | None = None) -> dict[str, i
     for file in set(added) | set(paths):
         lines = Path(file).read_text(encoding="utf-8").split("\n")
         for wrong, right in paths.get(file, {}).items():
-            lines = [f"from {right} import" + ln[len(f"from {wrong} import"):] if ln.startswith(f"from {wrong} import") else ln for ln in lines]
+            lines = [
+                f"from {right} import" + ln[len(f"from {wrong} import") :]
+                if ln.startswith(f"from {wrong} import")
+                else ln
+                for ln in lines
+            ]
         new = []
         for imp in sorted(added.get(file, ())):
-            module, _, name = imp[len("from "):].partition(" import ")
+            module, _, name = imp[len("from ") :].partition(" import ")
             same = next((i for i, ln in enumerate(lines) if ln.startswith(f"from {module} import ")), None)
             if same is None:
                 new.append(imp)
             else:
                 lines[same] += f", {name}"
         last_import = max((i for i, ln in enumerate(lines) if ln.startswith(("from ", "import "))), default=None)
-        at = last_import + 1 if last_import is not None else next(i for i, ln in enumerate(lines) if ln.startswith("module ")) + 1
+        at = (
+            last_import + 1
+            if last_import is not None
+            else next(i for i, ln in enumerate(lines) if ln.startswith("module ")) + 1
+        )
         lines[at:at] = new if last_import is not None or not new else ["", *new]
         Path(file).write_text(format_source("\n".join(lines)), encoding="utf-8")
     return {"imports": sum(map(len, added.values())), "paths": sum(map(len, paths.values()))}

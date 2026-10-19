@@ -42,7 +42,9 @@ class _Propagate(Exception):
 Predicate = Callable[..., bool]
 
 
-def fn(requires: list[tuple[str, Predicate]] = (), ensures: list[tuple[str, Predicate]] = (), effects: tuple[str, ...] = ()):  # type: ignore[assignment]
+def fn(
+    requires: list[tuple[str, Predicate]] = (), ensures: list[tuple[str, Predicate]] = (), effects: tuple[str, ...] = ()
+):  # type: ignore[assignment]
     """Wrap a function with its contracts and '?' propagation."""
 
     def deco(f: Callable[..., Any]) -> Callable[..., Any]:
@@ -53,15 +55,15 @@ def fn(requires: list[tuple[str, Predicate]] = (), ensures: list[tuple[str, Pred
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()
             arguments = dict(bound.arguments)
-            for text, pred in requires:
+            for clause, pred in requires:
                 if not pred(**arguments):
-                    raise ContractViolation("requires", name, text)
+                    raise ContractViolation("requires", name, clause)
             return arguments
 
         def after(result: Any, arguments: dict) -> Any:
-            for text, pred in ensures:
+            for clause, pred in ensures:
                 if not pred(result=result, **arguments):
-                    raise ContractViolation("ensures", name, text)
+                    raise ContractViolation("ensures", name, clause)
             return result
 
         if inspect.iscoroutinefunction(f):
@@ -368,32 +370,48 @@ def real_ctx() -> Ctx:
 
 # The HTML a page may use. The checker reads these tables too, so an element or attribute the runtime would
 # not render is an error before anything runs.
-HTML_TAGS = frozenset("""
+HTML_TAGS = frozenset(
+    """
 a abbr address area article aside audio b base bdi bdo blockquote body br button canvas caption cite code col
 colgroup data datalist dd del details dfn dialog div dl dt em embed fieldset figcaption figure footer form h1 h2
 h3 h4 h5 h6 head header hgroup hr html i iframe img input ins kbd label legend li link main map mark menu meta
 meter nav noscript object ol optgroup option output p picture pre progress q rp rt ruby s samp script search
 section select slot small source span strong style sub summary sup table tbody td template textarea tfoot th
 thead time title tr track u ul var video wbr svg path circle rect line polyline polygon g text use defs
-""".split())
+""".split()
+)
 VOID_TAGS = frozenset("area base br col embed hr img input link meta source track wbr".split())
 SVG_TAGS = frozenset("svg path circle rect line polyline polygon g text use defs".split())
-GLOBAL_ATTRS = frozenset("""
+GLOBAL_ATTRS = frozenset(
+    """
 accesskey autocapitalize autofocus class contenteditable dir draggable enterkeyhint hidden id inert inputmode is
 itemid itemprop itemref itemscope itemtype lang nonce popover role slot spellcheck style tabindex title translate
-""".split())
+""".split()
+)
 # htmx, written as plain keywords: post="/add" renders hx-post="/add"
 HTMX_ATTRS = {
-    "get": "hx-get", "post": "hx-post", "put": "hx-put", "patch": "hx-patch", "delete": "hx-delete",
-    "target": "hx-target", "swap": "hx-swap", "trigger": "hx-trigger", "confirm": "hx-confirm",
-    "push_url": "hx-push-url", "select": "hx-select", "indicator": "hx-indicator", "vals": "hx-vals",
-    "boost": "hx-boost", "include": "hx-include", "on": "hx-on",
+    "get": "hx-get",
+    "post": "hx-post",
+    "put": "hx-put",
+    "patch": "hx-patch",
+    "delete": "hx-delete",
+    "target": "hx-target",
+    "swap": "hx-swap",
+    "trigger": "hx-trigger",
+    "confirm": "hx-confirm",
+    "push_url": "hx-push-url",
+    "select": "hx-select",
+    "indicator": "hx-indicator",
+    "vals": "hx-vals",
+    "boost": "hx-boost",
+    "include": "hx-include",
+    "on": "hx-on",
 }
 TAG_ATTRS = {
     "a": "href target rel download hreflang type referrerpolicy ping",
     "img": "src alt width height loading decoding srcset sizes crossorigin referrerpolicy usemap ismap fetchpriority",
     "input": "type name value placeholder required checked disabled readonly min max step minlength maxlength "
-             "pattern size multiple accept autocomplete form list src alt width height",
+    "pattern size multiple accept autocomplete form list src alt width height",
     "button": "type name value disabled form formaction formmethod popovertarget popovertargetaction",
     "form": "action method enctype target novalidate autocomplete name accept_charset rel",
     "label": "for_ form",
@@ -410,18 +428,43 @@ TAG_ATTRS = {
     "audio": "src controls autoplay loop muted preload crossorigin",
     "source": "src type srcset sizes media",
     "track": "src kind srclang label default",
-    "td": "colspan rowspan headers", "th": "colspan rowspan headers scope abbr",
-    "col": "span", "colgroup": "span", "ol": "start reversed type", "li": "value",
-    "details": "open name", "dialog": "open", "time": "datetime", "data": "value",
-    "meter": "value min max low high optimum", "progress": "value max", "output": "for_ form name",
-    "canvas": "width height", "area": "alt coords shape href target download rel",
-    "blockquote": "cite", "q": "cite", "del": "cite datetime", "ins": "cite datetime",
-    "fieldset": "disabled form name", "object": "data type name width height", "embed": "src type width height",
-    "base": "href target", "html": "xmlns",
+    "td": "colspan rowspan headers",
+    "th": "colspan rowspan headers scope abbr",
+    "col": "span",
+    "colgroup": "span",
+    "ol": "start reversed type",
+    "li": "value",
+    "details": "open name",
+    "dialog": "open",
+    "time": "datetime",
+    "data": "value",
+    "meter": "value min max low high optimum",
+    "progress": "value max",
+    "output": "for_ form name",
+    "canvas": "width height",
+    "area": "alt coords shape href target download rel",
+    "blockquote": "cite",
+    "q": "cite",
+    "del": "cite datetime",
+    "ins": "cite datetime",
+    "fieldset": "disabled form name",
+    "object": "data type name width height",
+    "embed": "src type width height",
+    "base": "href target",
+    "html": "xmlns",
 }
 TAG_ATTRS = {tag: frozenset(names.split()) for tag, names in TAG_ATTRS.items()}
-URL_ATTRS = {"href": "GET", "action": None, "get": "GET", "post": "POST", "put": "PUT", "patch": "PATCH",
-             "delete": "DELETE", "src": "GET", "formaction": None}
+URL_ATTRS = {
+    "href": "GET",
+    "action": None,
+    "get": "GET",
+    "post": "POST",
+    "put": "PUT",
+    "patch": "PATCH",
+    "delete": "DELETE",
+    "src": "GET",
+    "formaction": None,
+}
 HTMX_SCRIPT = "https://unpkg.com/htmx.org@2.0.4"
 
 
@@ -472,10 +515,10 @@ def _render(child: Any, raw_text: bool = False) -> str:
         return child.markup
     if isinstance(child, (list, tuple)):
         return "".join(_render(c, raw_text) for c in child)
-    text = str(child)
+    value = str(child)
     if raw_text:  # <script>/<style>: no entities, but never close the element early
-        return text.replace("</", "<\\/")
-    return _html.escape(text, quote=False)
+        return value.replace("</", "<\\/")
+    return _html.escape(value, quote=False)
 
 
 def _element(tag: str, children: tuple, attrs: dict[str, Any]) -> Html:
@@ -525,17 +568,25 @@ def page(title: str, *body: Any, head: Any = (), lang: str = "en", css: str = ""
     """A complete HTML document, with htmx loaded."""
     return Html(
         "<!doctype html>"
-        + _element("html", (
-            _element("head", (
-                _element("meta", (), {"charset": "utf-8"}),
-                _element("meta", (), {"name": "viewport", "content": "width=device-width, initial-scale=1"}),
-                _element("title", (title,), {}),
-                _element("script", (), {"src": HTMX_SCRIPT}),
-                _element("style", (css,), {}) if css else None,
-                head,
-            ), {}),
-            _element("body", body, {}),
-        ), {"lang": lang}).markup
+        + _element(
+            "html",
+            (
+                _element(
+                    "head",
+                    (
+                        _element("meta", (), {"charset": "utf-8"}),
+                        _element("meta", (), {"name": "viewport", "content": "width=device-width, initial-scale=1"}),
+                        _element("title", (title,), {}),
+                        _element("script", (), {"src": HTMX_SCRIPT}),
+                        _element("style", (css,), {}) if css else None,
+                        head,
+                    ),
+                    {},
+                ),
+                _element("body", body, {}),
+            ),
+            {"lang": lang},
+        ).markup
     )
 
 
@@ -580,7 +631,7 @@ def redirect(path: str, status: int = 303) -> Response:
     return Response(status=status, headers={"Location": path, "HX-Redirect": path})
 
 
-def _route_regex(pattern: str):
+def route_regex(pattern: str):
     import re as _re
 
     parts = _re.split(r"\{(\w+)\}", pattern)
@@ -617,7 +668,7 @@ class App:
 
     def _add(self, method: str, path: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def register(handler: Callable[..., Any]) -> Callable[..., Any]:
-            self.routes.append((method, path, _route_regex(path), handler))
+            self.routes.append((method, path, route_regex(path), handler))
             return handler
 
         return register
@@ -639,16 +690,23 @@ class App:
 
     # -- handling
 
-    def handle(self, method: str, path: str, form: dict | None = None, headers: dict | None = None,
-               body: str = "") -> Response:
+    def handle(
+        self, method: str, path: str, form: dict | None = None, headers: dict | None = None, body: str = ""
+    ) -> Response:
         """Answer one request. Also the way to test an app: app.handle("GET", "/").status -> 200."""
         import traceback as _tb
         import urllib.parse as _up
 
         url = _up.urlsplit(path)
         query = dict(_up.parse_qsl(url.query))
-        req = Request(method=method.upper(), path=url.path, query=query, form=dict(form or {}),
-                      headers={k.lower(): v for k, v in (headers or {}).items()}, body=body)
+        req = Request(
+            method=method.upper(),
+            path=url.path,
+            query=query,
+            form=dict(form or {}),
+            headers={k.lower(): v for k, v in (headers or {}).items()},
+            body=body,
+        )
         allowed = []
         for m, _, regex, handler in self.routes:
             match = regex.match(url.path)
@@ -676,8 +734,11 @@ class App:
         if static is not None:
             return static
         if allowed:
-            return Response(status=405, body=_error_page(405, f"{req.method} is not allowed here; use {', '.join(allowed)}"),
-                            headers={"Allow": ", ".join(allowed)})
+            return Response(
+                status=405,
+                body=_error_page(405, f"{req.method} is not allowed here; use {', '.join(allowed)}"),
+                headers={"Allow": ", ".join(allowed)},
+            )
         return Response(status=404, body=_error_page(404, f"Nothing at {url.path}"))
 
     def _call(self, handler: Callable[..., Any], req: Request) -> Any:
@@ -722,7 +783,7 @@ class App:
 
         for prefix, folder in self.statics:
             if path.startswith(prefix + "/"):
-                rel = path[len(prefix) + 1:]
+                rel = path[len(prefix) + 1 :]
                 full = os.path.realpath(os.path.join(folder, rel))
                 if not full.startswith(os.path.realpath(folder) + os.sep) or not os.path.isfile(full):
                     return None
@@ -797,8 +858,8 @@ def _convert(value: str, ann: str, handler: Callable[..., Any], name: str) -> An
         base = next((b for b in getattr(target, "__mro__", ())[1:] if b in (int, float, str)), None)
         if base is not None:
             return target(base(value))
-    except (TypeError, ValueError):
-        raise _BadRequest(f"'{name}' must be {ann or 'text'}, got {value!r}")
+    except (TypeError, ValueError) as e:
+        raise _BadRequest(f"'{name}' must be {ann or 'text'}, got {value!r}") from e
     return value
 
 
