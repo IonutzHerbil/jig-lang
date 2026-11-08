@@ -1,4 +1,8 @@
-"""The interface view: everything an agent needs to use a module, no bodies."""
+"""The interface view: everything an agent needs to use a module, no bodies.
+
+It is valid Jig, like a .pyi stub: models copy the shape of what they are shown, so the view is written the way
+code is written (bodies are `...`, an inferred effect is a comment).
+"""
 
 from __future__ import annotations
 
@@ -11,47 +15,60 @@ def render_interface(mod: ModuleInfo, project: Project) -> str:
     lines = [f"module {mod.name}", ""]
     for name, base in mod.newtypes.items():
         lines.append(f"type {name} = {name}({base})")
+    if mod.newtypes:
+        lines.append("")
     for rec, fields in mod.records.items():
-        parts = [
-            f"{f}: {ast.unparse(ann)}" + (" = ..." if has_default else "") for f, (ann, has_default) in fields.items()
+        lines.append(f"record {rec}:")
+        lines += [
+            f"    {f}: {ast.unparse(ann)}" + (" = ..." if default else "") for f, (ann, default) in fields.items()
         ]
-        lines.append(f"record {rec}: {', '.join(parts)}")
+        _methods(lines, mod.classinfo.get(rec), project, mod)
     for en, variants in mod.enums.items():
-        lines.append(f"enum {en}: {' | '.join(variants)}")
+        lines.append(f"enum {en}:")
+        lines += [f"    {v}" for v in variants]
+        _methods(lines, mod.classinfo.get(en), project, mod)
     for name, node in mod.constants.items():
         ann = getattr(node, "annotation", None)
         lines.append(f"{name}: {ast.unparse(ann)}" if ann is not None else f"{name} = ...")
-    if len(lines) > 2:
+    if mod.constants:
         lines.append("")
 
     for ci in mod.classinfo.values():
-        public = {n: f for n, f in ci.methods.items() if not n.startswith("_") or n == "__init__"}
-        if ci.kind != "class" and not public:
+        if ci.kind != "class":
             continue
         bases = f"({', '.join(ast.unparse(b) for b in ci.node.bases)})" if ci.node.bases else ""
-        lines.append(f"class {ci.name}{bases}:" if ci.kind == "class" else f"{ci.kind} {ci.name}, methods:")
+        lines.append(f"class {ci.name}{bases}:")
         for name, ann in ci.fields.items():
             if not name.startswith("_"):
-                lines.append(f"    {name}: {ast.unparse(ann) if ann is not None else '?'}")
-        for fi in public.values():
-            _function(lines, fi, project, mod, indent="    ")
-        lines.append("")
+                lines.append(f"    {name}: {ast.unparse(ann)}" if ann is not None else f"    {name} = ...")
+        _methods(lines, ci, project, mod)
 
     for fi in mod.functions.values():
         _function(lines, fi, project, mod)
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _methods(lines: list[str], ci, project: Project, mod: ModuleInfo) -> None:
+    """A class's public methods, inside its block; then the blank line that ends the block."""
+    for name, fi in (ci.methods if ci else {}).items():
+        if not name.startswith("_") or name == "__init__":
+            _function(lines, fi, project, mod, indent="    ")
+    if lines[-1] != "":
+        lines.append("")
+
+
 def _function(lines: list[str], fi, project: Project, mod: ModuleInfo, indent: str = "") -> None:
     node = fi.node
-    ret = ast.unparse(node.returns) if node.returns is not None else "?"
-    deco = {"static": "@staticmethod ", "classmethod": "@classmethod ", "property": "@property "}.get(fi.kind, "")
+    ret = f" -> {ast.unparse(node.returns)}" if node.returns is not None else ""
+    deco = {"static": "@staticmethod", "classmethod": "@classmethod", "property": "@property"}.get(fi.kind)
+    if deco:
+        lines.append(f"{indent}{deco}")
     is_async = "async " if isinstance(node, ast.AsyncFunctionDef) else ""
-    lines.append(f"{indent}{deco}{is_async}def {fi.name}({ast.unparse(node.args)}) -> {ret}")
+    lines.append(f"{indent}{is_async}def {fi.name}({ast.unparse(node.args)}){ret}:")
     if fi.docstring:
         lines.append(f'{indent}    """{fi.docstring.strip().splitlines()[0]}"""')
     effects = ", ".join(sorted(project.effects_of(mod, fi))) or "none"
-    lines.append(f"{indent}    effects: {effects}" + ("" if fi.effects is not None else "  (inferred)"))
+    lines.append(f"{indent}    effects: {effects}" + ("" if fi.effects is not None else "  # inferred"))
     for c in fi.requires:
         lines.append(f"{indent}    requires: {c.text}")
     for c in fi.ensures:
@@ -60,4 +77,5 @@ def _function(lines: list[str], fi, project: Project, mod: ModuleInfo, indent: s
         lines.append(f"{indent}    examples:")
         for ex in fi.examples:
             lines.append(f"{indent}        {ex.call} -> {ex.expected or ex.kind}")
+    lines.append(f"{indent}    ...")
     lines.append("")

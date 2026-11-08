@@ -68,6 +68,8 @@ every edit is checked, and it cannot finish while a check fails. Without Claude 
 
 ```bash
 jig do "add a farewell next to the greeting"   # an AI implements it, checked, shown to you before applying (GEMINI_API_KEY)
+jig request new feature "farewell"             # or write it down first: a pre-filled form in .jig/requests/
+jig do .jig/requests/001-feature-farewell.md   # the code must meet the form's signature and examples
 jig check --pretty .                           # every check
 jig gate .                                     # checks, then tests: for CI and before committing
 ```
@@ -135,7 +137,8 @@ Full reference: [LANGUAGE.md](jig/docs/LANGUAGE.md), or `jig doc` offline. Every
 | `jig check <paths> [--pretty \| --for-model]` | every check, then runs examples |
 | `jig gate [paths]` | CI and pre-commit gate: every check, then the project's tests against the compiled program; changes nothing |
 | `jig fix <paths>` | mechanical fixes: formatting, if/elif chains to `match`, unambiguous missing imports and module paths |
-| `jig do "<request>" [--project dir]` | an AI implements the request in a scratch copy, repairs until the checks pass, shows how it read the request, the diff and edge-case behavior, then asks before applying |
+| `jig do "<request>" [--project dir]` or `jig do <request file>` | an AI implements the request in a scratch copy, repairs until the checks pass, shows how it read the request, the diff and edge-case behavior, then asks before applying |
+| `jig request new <kind> "<title>"` | a pre-filled request form in `.jig/requests/` (`feature`, `fix`, `change`, `test`): the project's real names, the function as it is now, a contract to complete; `jig request check`, `jig request list`, and `jig do <file>` implements it and records the run in the file |
 | `jig probe <paths>` | what each function returns on edge inputs (`""`, `0`, `[]`, `-1`) |
 | `jig interface <paths>` | signatures, inferred effects, contracts and examples, without bodies: the low-context view for agents |
 | `jig fmt <paths>` | canonical formatting of `.jig` files |

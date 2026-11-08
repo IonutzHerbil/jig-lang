@@ -384,6 +384,7 @@ class Project(RoutesOfProject):
         self._constant_types: dict[tuple[str, str], tuple | None] = {}
         self._walked: dict[tuple[str, str], BodyChecker] = {}  # functions already walked, with their calls recorded
         self._real: dict[tuple[str, str], set[str]] = {}  # real_effects, once known
+        self._libs: dict[tuple[str, str], set[str]] = {}  # libraries_of, once known
         self._class_chains: dict[tuple[str, str], tuple[list[tuple[ModuleInfo, ClassInfo]], bool]] = {}
         self._ann_types: dict[tuple[str, int], tuple[tuple | None, ast.expr]] = {}
         self._effect_checks: list[tuple[ModuleInfo, FuncInfo, BodyChecker]] = []
@@ -693,6 +694,10 @@ class Project(RoutesOfProject):
         through the standard library itself, directly or through anything it calls. Libraries declared by a
         manifest do not count: in examples and probes they are their fakes. What `jig probe` must never run."""
         return self._through_calls(mod, fi, self._real, lambda c: set(c.real_world), lambda f: True)
+
+    def libraries_of(self, mod: ModuleInfo, fi: FuncInfo) -> set[str]:
+        """The manifest libraries fi calls, directly or through anything it calls: in examples, their fakes."""
+        return self._through_calls(mod, fi, self._libs, lambda c: set(c.libraries), lambda f: True)
 
     def _through_calls(
         self,
@@ -1472,6 +1477,7 @@ class BodyChecker(TypeInference, WebChecks, ast.NodeVisitor):
         # effects looked up: how effects_of builds the call graph.
         self.callees: dict[tuple[str, str], tuple[ModuleInfo, FuncInfo, int, int, str]] | None = None
         self.real_world: set[str] = set()  # effects this code has through the standard library itself
+        self.libraries: set[str] = set()  # manifest libraries this code calls
         self._async = [isinstance(func.node, ast.AsyncFunctionDef) if func else False]
         self._chain_seen: set[int] = set()
 
@@ -2241,6 +2247,7 @@ class BodyChecker(TypeInference, WebChecks, ast.NodeVisitor):
 
     def _check_lib_call(self, node: ast.Call, name: str, man: Manifest, fn: str) -> None:
         """A call to a library function: its declared effects, arguments and argument types."""
+        self.libraries.add(man.name)
         for eff in sorted(man.functions.get(fn, ())):
             self.use(eff, node, via=name)
         params = man.params.get(fn)

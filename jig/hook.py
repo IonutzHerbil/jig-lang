@@ -22,6 +22,7 @@ from .autoimport import fix_imports
 from .cli import check_project, feedback_for_model
 from .files import project_root, source_files
 from .fixer import fix_source
+from .requests import all_requests
 
 MODULE_RE = re.compile(r"^module\s+([\w.]+)", re.M)
 IMPORT_RE = re.compile(r"^(?:from\s+([\w.]+)\s+import\s+\(?([\w ,]+)|import\s+([\w.]+))", re.M)
@@ -132,6 +133,12 @@ def session(event: dict) -> int:
         parts.append(f"library lib.{name} exports: {', '.join(sorted(man.exports))}")
     for dec in project.decisions.values():
         parts.append(f"decision {dec.id}: {dec.text.get('decision', '')}")
+    if open_requests := [r for r in all_requests(root) if r.status == "open"]:
+        parts += [
+            "",
+            "Open requests (implement one by meeting its Contract section exactly: module, signature, examples):",
+        ]
+        parts += [f"- {r.path.relative_to(root).as_posix()}: {r.kind}, {r.title}" for r in open_requests]
     learned = instincts(root)
     if learned:
         parts += ["", "Mistakes agents made in this project before; avoid them:", *learned]

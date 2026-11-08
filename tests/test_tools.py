@@ -190,8 +190,9 @@ def farewell(name: str) -> str:
         seen_prompts.append(turns[-1])
         return Reply(text=answers[len(seen_prompts) - 1])
 
-    work, changed, reading, ok = run("add a farewell", root, model, rounds=3, log=lambda *_: None)
-    assert ok and reading == "I add a farewell."
+    result = run("add a farewell", root, model, rounds=3, log=lambda *_: None)
+    work, changed = result.work, result.changed
+    assert result.ok and result.reading == "I add a farewell." and result.attempts == 2
     assert "unknown name 'nme'" in seen_prompts[1] and "fix: replace 'nme' with 'name'" in seen_prompts[1]
     assert [p.name for p in changed] == ["farewell.jig"]
     assert {
@@ -238,3 +239,44 @@ def pure(n: int) -> int:
     assert "clean(...) -> not run: it reaches the real world (fs)" in out
     assert "tidy(...) -> not run: it reaches the real world (fs)" in out
     assert "pure(-1) -> -2" in out
+
+
+def test_interface_view_is_valid_jig():
+    """Models copy the shape of what they are shown, so the interface view must parse as Jig: no bodies, but the
+    colons, blocks and clauses of real code."""
+    import ast
+    from pathlib import Path
+
+    from jig.checker import Project
+    from jig.files import discover
+    from jig.interface import render_interface
+    from jig.preprocess import preprocess
+
+    repo = Path(__file__).parent.parent
+    for source in ("examples", "tests/cases"):
+        project = Project()
+        project.load(discover([str(repo / source)]))
+        for mod in project.modules.values():
+            view = render_interface(mod, project)
+            pre, diags = preprocess(view, mod.name)
+            assert not diags, (mod.name, [d.message for d in diags], view)
+            ast.parse(pre.source)
+
+
+def test_failed_example_names_the_fakes_it_ran_through(copy_of):
+    """A failed example whose call reaches a library, even through another function, says the library's fake decided
+    what it returned; one that reaches no library does not."""
+    from jig.cli import check_project
+
+    root = copy_of("examples/shop")
+    (root / "wrap.jig").write_text(
+        "module shop.wrap\n\nfrom lib.stripe import Amount, ChargeId, CustomerId, StripeError, charge\n\n\n"
+        'def _go(c: str) -> Result[ChargeId, StripeError]:\n    return charge(Amount(5), CustomerId(c), "eur")\n\n\n'
+        'def pay(c: str) -> Result[ChargeId, StripeError]:\n    """Charge 5."""\n    examples:\n'
+        '        pay("cus_invalid") -> Ok(ChargeId("ch_5"))\n    return _go(c)\n\n\n'
+        'def twice(n: int) -> int:\n    """Double."""\n    examples:\n        twice(2) -> 5\n    return n * 2\n',
+        encoding="utf-8",
+    )
+    _, summary = check_project([str(root)])
+    hints = {d["location"]["function"]: d["fix"]["hint"] for d in summary["diagnostics"] if d["code"] == "C001"}
+    assert "lib/stripe.fake.py" in hints["pay"] and "fake" not in hints["twice"]

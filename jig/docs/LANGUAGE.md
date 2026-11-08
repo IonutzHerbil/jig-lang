@@ -275,6 +275,41 @@ def toggle(todo_id: int) -> Html:
   parallel. `App(concurrent=True)` runs handlers in parallel, and then the app guards its own state. `async def`
   handlers work.
 
+## Requests
+
+A request is one Markdown form per change you ask an AI for, kept in `.jig/requests/` and committed with the code,
+so the folder records why each piece of code exists.
+
+```
+jig request new feature "loyalty points"              # .jig/requests/004-feature-loyalty-points.md
+jig request new fix "zero amounts" --function charge   # fix, change and test are about one function
+jig request check .jig/requests/004-feature-loyalty-points.md
+jig do .jig/requests/004-feature-loyalty-points.md
+jig request list
+```
+
+| Kind | For | You write |
+| --- | --- | --- |
+| `feature` | a function that does not exist yet | the goal, rules and edge cases, the signature and examples |
+| `fix` | a function that gives a wrong result | what happens, what should, and the example that fails today |
+| `change` | a function that should behave differently | what changes, and the signature or examples that show it |
+| `test` | more examples for a function that stays as it is | the examples |
+
+Jig fills in what it can know: the project code the request is likely to use and every type name in the
+project, a module and function name, the project's error type, and for a fix, change or test, the function as
+it is now with its clauses and examples. You replace each `<placeholder>`.
+
+The `Contract` section is a ```` ```jig ```` block holding one function: its `module`, signature and examples, with
+`...` for a body. `jig request check` says what is missing before any model runs: empty sections, placeholders,
+names that do not exist (with the closest ones), a feature that already exists, a fix without a new example, or
+a change that changes nothing. `jig do <file>` then implements it, and passing the checks is not enough: the code
+must have the contract's signature and pass every example it lists (written any equivalent way), and a test
+request may not change the function's body. Anything short of that goes back to the model.
+
+Every run adds an entry under `## History` in the file: when, the model, attempts, whether it was applied, the
+files, and how the model read the request. A request becomes `status: done` when its result is applied. Open
+requests appear in the Claude Code session map, and the skill treats their contracts as binding.
+
 ## Docker
 
 `jig docker` writes a `Dockerfile` whose first stage runs `jig gate` (every check, example and test) and then
@@ -339,7 +374,9 @@ Reference material for the model writing code. Not checked.
 | `jig run [paths] [--entry m.f]` | check, build, and start the entry (the config's by default): call a function, with a real `Ctx` if it takes one, or serve a web app |
 | `jig fix <paths> [--check]` | formatting, if/elif chains to `match` (D003), missing imports and module paths when unambiguous |
 | `jig fmt <paths> [--check]` | canonical formatting (spaces, no trailing whitespace, sorted imports) |
-| `jig do "<request>"` | an AI implements the request, checked, and asks before applying (`GEMINI_API_KEY`) |
+| `jig do "<request>"` or `jig do <request file>` | an AI implements the request, checked (and held to a request file's contract), and asks before applying (`GEMINI_API_KEY`) |
+| `jig request new <kind> "<title>" [--function f]` | write a pre-filled request in `.jig/requests/`: `feature`, `fix`, `change` or `test` |
+| `jig request check <file>` / `jig request list` | whether a request is ready for `jig do`; every request and its status |
 | `jig probe <paths>` | what each pure function returns on edge inputs (`""`, `0`, `-1`, `[]`) |
 | `jig interface <paths>` | signatures, effects, contracts and examples, without bodies |
 | `jig build <paths> -o <dir> [--entry m.f]` | check, then write a plain Python package; with an entry (or the config's), `python <dir>` runs it |

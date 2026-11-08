@@ -1,4 +1,4 @@
-"""jig command line: new, init, do, doc, serve, repl, lsp, docker, check, gate, fmt, fix, probe, build, interface, run. JSON by default."""
+"""jig command line: new, init, request, do, doc, serve, repl, lsp, docker, check, gate, fmt, fix, probe, build, interface, run. JSON by default."""
 
 from __future__ import annotations
 
@@ -243,6 +243,36 @@ def cmd_do(args: argparse.Namespace) -> int:
     return do_main(args.request, args.project, args.model, args.rounds, args.yes)
 
 
+def cmd_request(args: argparse.Namespace) -> int:
+    from . import requests
+    from .do import load_request
+
+    root = Path(args.dir).resolve() if getattr(args, "dir", None) else files.project_root(Path.cwd())
+    try:
+        if args.action == "new":
+            path = requests.new(root, args.kind, args.title, args.function)
+            try:
+                path = path.relative_to(Path.cwd())
+            except ValueError:
+                pass
+            print(
+                f"wrote {path.as_posix()}\nfill it in, then:  jig request check {path.as_posix()}"
+                f"\n                   jig do {path.as_posix()}"
+            )
+        elif args.action == "list":
+            print(requests.render_list(root))
+        else:
+            request, _, _, problems = load_request(Path(args.file), args.dir)
+            if problems:
+                print(f"Request {request.id} is not ready:\n" + "\n".join(f"- {p}" for p in problems))
+                return 1
+            print(f"Request {request.id} is ready: jig do {args.file}")
+    except requests.RequestError as e:
+        print(e, file=sys.stderr)
+        return 2
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Check, build with the launcher, and run the program exactly as `python <build>` runs it in production."""
     import os
@@ -322,8 +352,25 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-tests", action="store_true", help="skip running tests/")
     p.set_defaults(func=cmd_gate)
 
-    p = sub.add_parser("do", help="implement a feature request with an LLM, verified before it is applied")
-    p.add_argument("request", help='what you want, e.g. "add loyalty points: 1 per 100 cents spent"')
+    p = sub.add_parser("request", help="request files: one form per change asked of an AI, kept as history")
+    actions = p.add_subparsers(dest="action", required=True)
+    a = actions.add_parser("new", help="write a pre-filled request in .jig/requests/")
+    a.add_argument("kind", choices=["feature", "fix", "change", "test"])
+    a.add_argument("title", help='a few words, e.g. "loyalty points"')
+    a.add_argument("--function", help="fix, change, test: the function it is about (name or module.name)")
+    a.add_argument("--dir", help="project directory (default: the project of the current directory)")
+    a = actions.add_parser("list", help="every request and its status")
+    a.add_argument("--dir", help="project directory (default: the project of the current directory)")
+    a = actions.add_parser("check", help="is the request complete, and does it name only what exists?")
+    a.add_argument("file")
+    a.add_argument("--dir", help="project directory (default: the one holding .jig/requests)")
+    p.set_defaults(func=cmd_request)
+
+    p = sub.add_parser("do", help="implement a request with an LLM, verified before it is applied")
+    p.add_argument(
+        "request",
+        help='what you want, e.g. "add loyalty points: 1 per 100 cents spent", or a request file from jig request new',
+    )
     p.add_argument("--project", help="project directory (default: current directory)")
     p.add_argument("--model", default="gemini-flash-latest", help="Gemini model id")
     p.add_argument("--rounds", type=int, default=5, help="max attempts including repairs")

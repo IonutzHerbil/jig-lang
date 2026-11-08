@@ -161,7 +161,11 @@ def run_examples(project: Project, build_dir: Path) -> tuple[int, int, list[Diag
         detail = r.get("detail", "")
         if status == "fail" and "actual" in r:
             context["actual"] = r["actual"]
-            fix = {"kind": "review", "hint": "fix the body, or update the example if the new behavior is intended"}
+            hint = "fix the body, or update the example if the new behavior is intended"
+            if libs := sorted(project.libraries_of(mod, fi)):
+                fakes = ", ".join(f"lib/{name}.fake.py" for name in libs)
+                hint += f"; examples call libraries through their fakes ({fakes}), whose data decides what they return"
+            fix = {"kind": "review", "hint": hint}
         elif detail.startswith("requires rejected the input"):
             fix = {
                 "kind": "review",

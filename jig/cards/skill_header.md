@@ -22,3 +22,11 @@ Humans describe what they want; you write the Jig; the compiler verifies it.
    Compare every line with what the user asked for, and fix any that differ.
 7. Done means `jig check` passes and the probes match the request. Never edit generated Python.
 
+## Request files
+
+A task may point at a request in `.jig/requests/` (written with `jig request new`, listed in the session map
+while open). Its `Contract` section is binding: write exactly that module and signature, and keep every example it
+lists; for a `test` request, add the examples without changing the function's body. `jig request check <file>`
+says whether the request itself is complete. When asked to start one, run `jig request new <feature|fix|change|test>
+"<title>"` (with `--function <name>` for fix, change and test) and fill in what the user told you.
+
